@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Add Stocks | Inventory Management System</title>
+  <script>
+    if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    window.scrollTo(0, 0);
+    window.addEventListener("load", () => {
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      window.scrollTo(0, 0);
+    });
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="add-stock">
+  <div class="app-shell">
+    <div class="sidebar-backdrop" data-sidebar-close></div>
+    <aside class="sidebar" id="app-sidebar">
+      <button class="sidebar-close" type="button" data-sidebar-close aria-label="Close navigation">&times;</button>
+
+      <div class="brand-block">
+        <div class="brand-mark">IMS</div>
+        <div>
+          <p class="eyebrow">Inventory Workspace</p>
+          <h1>Inventory Hub</h1>
+          <p class="brand-meta">Simple daily stock control</p>
+        </div>
+      </div>
+
+      <nav class="nav-section" aria-label="Primary navigation">
+        <p class="nav-section-label">Navigation</p>
+        <div class="nav-card">
+          <a class="nav-link" href="index.html">
+            <span class="nav-icon">HM</span>
+            <span class="nav-copy">
+              <span class="nav-title">Home</span>
+              <span class="nav-subtitle">Main actions for daily stock work</span>
+            </span>
+          </a>
+          <a class="nav-link" href="inventory.html">
+            <span class="nav-icon">IM</span>
+            <span class="nav-copy">
+              <span class="nav-title">View Stocks</span>
+              <span class="nav-subtitle">Open the stock register</span>
+            </span>
+          </a>
+          <a class="nav-link active" href="add-stock.html">
+            <span class="nav-icon">IN</span>
+            <span class="nav-copy">
+              <span class="nav-title">Add Stocks</span>
+              <span class="nav-subtitle">Receive incoming stock</span>
+            </span>
+          </a>
+          <a class="nav-link" href="draw-stock.html">
+            <span class="nav-icon">OUT</span>
+            <span class="nav-copy">
+              <span class="nav-title">Draw Stocks</span>
+              <span class="nav-subtitle">Issue stock for use</span>
+            </span>
+          </a>
+          <a class="nav-link" href="activity-history.html">
+            <span class="nav-icon">LOG</span>
+            <span class="nav-copy">
+              <span class="nav-title">Activity History</span>
+              <span class="nav-subtitle">Audit stock actions and handover forms</span>
+            </span>
+          </a>
+        </div>
+      </nav>
+    </aside>
+
+    <main class="main-shell">
+      <header class="topbar">
+        <div class="topbar-copy">
+          <p class="eyebrow">Stock Replenishment</p>
+          <h2>Add Stocks</h2>
+          <p class="hero-copy">Capture incoming inventory quantities accurately and update owned or consignment balances for existing stock items.</p>
+        </div>
+        <div class="topbar-actions">
+          <a class="button-link" href="index.html">Back to Home</a>
+          <a class="button-link" href="create-stock.html">Create New Stock</a>
+        </div>
+      </header>
+
+      <section class="panel form-panel">
+        <div class="panel-header panel-header-tight">
+          <div>
+            <p class="eyebrow">Stock In Entry</p>
+            <h3>Update quantities for existing stock items</h3>
+            <p class="section-copy">Use this form to record incoming materials, including consignment stock returned to its original required amount.</p>
+          </div>
+        </div>
+        <form id="adjustment-form" class="stack-form">
+          <div class="panel-header panel-header-tight stock-out-lines-header">
+            <div>
+              <p class="eyebrow">Transaction Lines</p>
+              <p class="section-copy">Select each item, enter the quantity received, and add it to the stock-in transaction list below.</p>
+            </div>
+          </div>
+          <div class="stock-out-builder">
+            <div class="stock-out-builder-grid">
+              <label>
+                Item
+                <select id="adjust-item" required></select>
+              </label>
+              <label>
+                Quantity
+                <input id="adjust-quantity" type="number" min="1" step="1" value="1" required>
+              </label>
+              <label>
+                Stock type
+                <select id="adjust-stock-type" required>
+                  <option value="own">Our stock</option>
+                  <option value="consignment">Consignment stock</option>
+                </select>
+              </label>
+              <button type="button" class="button-link stock-out-add-button" id="add-adjustment-line">Add to List</button>
+            </div>
+          </div>
+          <div class="stock-out-list">
+            <div class="table-wrap elevated-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th>Stock Code</th>
+                    <th>Current Stock</th>
+                    <th>Stock Type</th>
+                    <th>Qty to Add</th>
+                    <th>Unit</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="adjustment-lines"></tbody>
+              </table>
+            </div>
+            <div id="adjustment-empty" class="empty-state">No items added yet. Build your stock-in list above.</div>
+            <div id="adjustment-summary" class="table-summary"></div>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="button-secondary">Add Stock</button>
+            <span class="form-hint">Choose consignment stock when replenishing supplier-owned items that were drawn for use.</span>
+          </div>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

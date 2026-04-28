@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inventory Management System</title>
+  <script>
+    if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    window.scrollTo(0, 0);
+    window.addEventListener("load", () => {
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      window.scrollTo(0, 0);
+    });
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="home">
+  <main class="home-shell">
+    <section class="home-card">
+      <div class="home-brand">
+        <div class="brand-mark">IMS</div>
+        <div>
+          <p class="eyebrow">Inventory Management System</p>
+          <h1 id="home-title">Choose an action</h1>
+          <p class="hero-copy" id="home-copy">Start with one of the three main tasks below.</p>
+        </div>
+      </div>
+
+      <div id="home-session-panel"></div>
+
+      <div class="home-action-grid" id="home-action-grid">
+        <a class="primary-action-card primary-action-card-view" href="inventory.html#inventory-register-card">
+          <span class="primary-action-icon">01</span>
+          <span class="primary-action-title">View Stocks</span>
+          <span class="primary-action-copy">Open the stock register to search items and check quantities.</span>
+        </a>
+        <a class="primary-action-card primary-action-card-add" href="add-stock.html">
+          <span class="primary-action-icon">02</span>
+          <span class="primary-action-title">Add Stocks</span>
+          <span class="primary-action-copy">Open the stock-in page and update incoming items.</span>
+        </a>
+        <a class="primary-action-card primary-action-card-draw" href="draw-stock.html">
+          <span class="primary-action-icon">03</span>
+          <span class="primary-action-title">Draw Stocks</span>
+          <span class="primary-action-copy">Open the stock-out page for issuing internal materials.</span>
+        </a>
+        <a class="primary-action-card primary-action-card-view" href="activity-history.html">
+          <span class="primary-action-icon">04</span>
+          <span class="primary-action-title">Activity History</span>
+          <span class="primary-action-copy">Audit stock creation, stock movement, and handover form records by user.</span>
+        </a>
+      </div>
+    </section>
+  </main>
+  <script src="app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Activity Detail | Inventory Management System</title>
+  <script>
+    if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    window.scrollTo(0, 0);
+    window.addEventListener("load", () => {
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      window.scrollTo(0, 0);
+    });
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="activity-detail">
+  <div class="app-shell">
+    <div class="sidebar-backdrop" data-sidebar-close></div>
+    <aside class="sidebar" id="app-sidebar">
+      <button class="sidebar-close" type="button" data-sidebar-close aria-label="Close navigation">&times;</button>
+
+      <div class="brand-block">
+        <div class="brand-mark">IMS</div>
+        <div>
+          <p class="eyebrow">Inventory Workspace</p>
+          <h1>Inventory Hub</h1>
+          <p class="brand-meta">Simple daily stock control</p>
+        </div>
+      </div>
+
+      <nav class="nav-section" aria-label="Primary navigation">
+        <p class="nav-section-label">Navigation</p>
+        <div class="nav-card">
+          <a class="nav-link" href="index.html">
+            <span class="nav-icon">HM</span>
+            <span class="nav-copy">
+              <span class="nav-title">Home</span>
+              <span class="nav-subtitle">Main actions for daily stock work</span>
+            </span>
+          </a>
+          <a class="nav-link" href="inventory.html">
+            <span class="nav-icon">IM</span>
+            <span class="nav-copy">
+              <span class="nav-title">Inventory</span>
+              <span class="nav-subtitle">Overview and stock register</span>
+            </span>
+          </a>
+          <a class="nav-link" href="activity-history.html">
+            <span class="nav-icon">LOG</span>
+            <span class="nav-copy">
+              <span class="nav-title">Activity History</span>
+              <span class="nav-subtitle">Audit stock actions and handover forms</span>
+            </span>
+          </a>
+          <a class="nav-link active" href="activity-detail.html">
+            <span class="nav-icon">DET</span>
+            <span class="nav-copy">
+              <span class="nav-title">Activity Detail</span>
+              <span class="nav-subtitle">Review a detailed transaction breakdown</span>
+            </span>
+          </a>
+        </div>
+      </nav>
+    </aside>
+
+    <main class="main-shell">
+      <header class="topbar">
+        <div class="topbar-copy">
+          <p class="eyebrow">Record Detail</p>
+          <h2>Detailed activity transaction breakdown</h2>
+          <p class="hero-copy">Open a full record view to review timestamps, accountability details, and item-level quantity information.</p>
+        </div>
+        <div class="topbar-actions">
+          <a class="button-link" href="activity-history.html">Back to History</a>
+          <a class="button-link" href="inventory.html">Inventory</a>
+        </div>
+      </header>
+
+      <div id="activity-detail-shell" class="activity-detail-shell"></div>
+    </main>
+  </div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

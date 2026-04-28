@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Create New Stock | Inventory Management System</title>
+  <script>
+    if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    window.scrollTo(0, 0);
+    window.addEventListener("load", () => {
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      window.scrollTo(0, 0);
+    });
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="create-stock">
+  <div class="app-shell">
+    <div class="sidebar-backdrop" data-sidebar-close></div>
+    <aside class="sidebar" id="app-sidebar">
+      <button class="sidebar-close" type="button" data-sidebar-close aria-label="Close navigation">&times;</button>
+
+      <div class="brand-block">
+        <div class="brand-mark">IMS</div>
+        <div>
+          <p class="eyebrow">Inventory Workspace</p>
+          <h1>Inventory Hub</h1>
+          <p class="brand-meta">Simple daily stock control</p>
+        </div>
+      </div>
+
+      <nav class="nav-section" aria-label="Primary navigation">
+        <p class="nav-section-label">Navigation</p>
+        <div class="nav-card">
+          <a class="nav-link" href="index.html">
+            <span class="nav-icon">HM</span>
+            <span class="nav-copy">
+              <span class="nav-title">Home</span>
+              <span class="nav-subtitle">Main actions for daily stock work</span>
+            </span>
+          </a>
+          <a class="nav-link" href="inventory.html">
+            <span class="nav-icon">IM</span>
+            <span class="nav-copy">
+              <span class="nav-title">View Stocks</span>
+              <span class="nav-subtitle">Open the stock register</span>
+            </span>
+          </a>
+          <a class="nav-link" href="add-stock.html">
+            <span class="nav-icon">IN</span>
+            <span class="nav-copy">
+              <span class="nav-title">Add Stocks</span>
+              <span class="nav-subtitle">Receive incoming stock</span>
+            </span>
+          </a>
+          <a class="nav-link" href="draw-stock.html">
+            <span class="nav-icon">OUT</span>
+            <span class="nav-copy">
+              <span class="nav-title">Draw Stocks</span>
+              <span class="nav-subtitle">Issue stock for use</span>
+            </span>
+          </a>
+          <a class="nav-link" href="activity-history.html">
+            <span class="nav-icon">LOG</span>
+            <span class="nav-copy">
+              <span class="nav-title">Activity History</span>
+              <span class="nav-subtitle">Audit stock actions and handover forms</span>
+            </span>
+          </a>
+          <a class="nav-link active" href="create-stock.html">
+            <span class="nav-icon">NEW</span>
+            <span class="nav-copy">
+              <span class="nav-title">Create New Stock</span>
+              <span class="nav-subtitle">Add a brand-new inventory item</span>
+            </span>
+          </a>
+        </div>
+      </nav>
+    </aside>
+
+    <main class="main-shell">
+      <header class="topbar">
+        <div class="topbar-copy">
+          <p class="eyebrow">Create New Stock</p>
+          <h2>Add a new inventory item</h2>
+          <p class="hero-copy">Create a brand-new stock record with item details, owned quantity, consignment quantity, and storage location.</p>
+        </div>
+        <div class="topbar-actions">
+          <a class="button-link" href="index.html">Back to Home</a>
+          <a class="button-link" href="activity-history.html">Activity History</a>
+        </div>
+      </header>
+
+      <section class="panel form-panel">
+        <div class="panel-header panel-header-tight">
+          <div>
+            <p class="eyebrow">New Item Form</p>
+            <h3>Create inventory record</h3>
+            <p class="section-copy">Use this page when you need to add a completely new stock item and separate your stock from consignment stock.</p>
+          </div>
+        </div>
+        <form id="inventory-form" class="stack-form">
+          <div class="field-grid">
+            <label>
+              Brand
+              <input name="brand" type="text" placeholder="CommScope" required>
+            </label>
+            <label>
+              Model
+              <input name="model" type="text" placeholder="Cat6 305M" required>
+            </label>
+            <label>
+              Description
+              <input name="name" type="text" placeholder="Cat6 UTP Cable Box 305m" required>
+            </label>
+            <label>
+              Stock code
+              <input name="sku" type="text" placeholder="SC-001" required>
+            </label>
+            <label>
+              Unit
+              <input name="unit" type="text" placeholder="pcs / rolls / m" required>
+            </label>
+            <label>
+              Our stock quantity
+              <input name="quantity" type="number" min="0" step="1" required>
+            </label>
+            <label>
+              Consignment stock quantity
+              <input name="consignmentQuantity" type="number" min="0" step="1" value="0">
+            </label>
+            <label>
+              Location
+              <input name="location" type="text" placeholder="Main Store A-01" required>
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="button-primary">Save Item</button>
+            <span class="form-hint">Consignment quantity is stored as the original amount to replenish when it is drawn.</span>
+          </div>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

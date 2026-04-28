@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inventory | Inventory Management System</title>
+  <script>
+    if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    window.scrollTo(0, 0);
+    window.addEventListener("load", () => {
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      window.scrollTo(0, 0);
+    });
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="inventory">
+  <div class="app-shell">
+    <div class="sidebar-backdrop" data-sidebar-close></div>
+    <aside class="sidebar" id="app-sidebar">
+      <button class="sidebar-close" type="button" data-sidebar-close aria-label="Close navigation">&times;</button>
+
+      <div class="brand-block">
+        <div class="brand-mark">IMS</div>
+        <div>
+          <p class="eyebrow">Inventory Workspace</p>
+          <h1>Inventory Hub</h1>
+          <p class="brand-meta">Simple daily stock control</p>
+        </div>
+      </div>
+
+      <nav class="nav-section" aria-label="Primary navigation">
+        <p class="nav-section-label">Navigation</p>
+        <div class="nav-card">
+          <a class="nav-link" href="index.html">
+            <span class="nav-icon">HM</span>
+            <span class="nav-copy">
+              <span class="nav-title">Home</span>
+              <span class="nav-subtitle">Main actions for daily stock work</span>
+            </span>
+          </a>
+          <a class="nav-link active" href="inventory.html">
+            <span class="nav-icon">IM</span>
+            <span class="nav-copy">
+              <span class="nav-title">Inventory</span>
+              <span class="nav-subtitle">Overview, register, and movement history</span>
+            </span>
+          </a>
+          <a class="nav-link" href="add-stock.html">
+            <span class="nav-icon">IN</span>
+            <span class="nav-copy">
+              <span class="nav-title">Add Stocks</span>
+              <span class="nav-subtitle">Receive incoming stock</span>
+            </span>
+          </a>
+          <a class="nav-link" href="draw-stock.html">
+            <span class="nav-icon">OUT</span>
+            <span class="nav-copy">
+              <span class="nav-title">Draw Stocks</span>
+              <span class="nav-subtitle">Issue stock for use</span>
+            </span>
+          </a>
+          <a class="nav-link" href="activity-history.html">
+            <span class="nav-icon">LOG</span>
+            <span class="nav-copy">
+              <span class="nav-title">Activity History</span>
+              <span class="nav-subtitle">Audit stock actions and handover forms</span>
+            </span>
+          </a>
+        </div>
+      </nav>
+
+      <nav class="nav-section" aria-label="Page sections">
+        <p class="nav-section-label">Jump To</p>
+        <div class="nav-card nav-card-secondary">
+          <a class="nav-link nav-link-secondary" href="#executive-overview">
+            <span class="nav-icon">01</span>
+            <span class="nav-copy">
+              <span class="nav-title">Overview</span>
+              <span class="nav-subtitle">Today's stock position</span>
+            </span>
+          </a>
+          <a class="nav-link nav-link-secondary" href="#inventory-register-card">
+            <span class="nav-icon">02</span>
+            <span class="nav-copy">
+              <span class="nav-title">Register</span>
+              <span class="nav-subtitle">Search and review stock</span>
+            </span>
+          </a>
+        </div>
+      </nav>
+    </aside>
+
+    <main class="main-shell">
+      <header class="topbar" id="executive-overview">
+        <div class="topbar-copy">
+          <p class="eyebrow">Inventory Control</p>
+          <h2>Inventory register and stock visibility</h2>
+          <p class="hero-copy">Review current stock records, verify item availability, and monitor inventory information in a centralized register.</p>
+        </div>
+        <div class="topbar-actions">
+          <a class="button-link" href="index.html">Back to Home</a>
+          <a class="button-link" href="add-stock.html">Add Stocks</a>
+          <a class="button-link" href="draw-stock.html">Draw Stocks</a>
+          <a class="button-link" href="activity-history.html">Activity History</a>
+        </div>
+      </header>
+
+      <section class="panel" id="inventory-register-card">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Inventory Register</p>
+            <h3>Registered stock records</h3>
+            <p class="section-copy">Search, filter, and review item records to support day-to-day inventory control and stock verification.</p>
+          </div>
+          <div class="register-toolbar">
+            <div class="table-filters" aria-label="Inventory filters">
+              <label class="filter-field">
+                <span class="filter-label">Search</span>
+                <input
+                  id="inventory-search"
+                  type="search"
+                  placeholder="Search brand, model, description, stock code, or location"
+                  autocomplete="off"
+                >
+              </label>
+              <label class="filter-field filter-field-select">
+                <span class="filter-label">Brand</span>
+                <select id="inventory-brand-filter">
+                  <option value="all">All brands</option>
+                </select>
+              </label>
+              <label class="filter-field filter-field-select">
+                <span class="filter-label">Category</span>
+                <select id="inventory-model-filter">
+                  <option value="all">All categories</option>
+                </select>
+              </label>
+              <label class="filter-field filter-field-select">
+                <span class="filter-label">Availability</span>
+                <select id="inventory-status-filter">
+                  <option value="all">All items</option>
+                  <option value="low-stock">Low stock</option>
+                  <option value="in-stock">In stock</option>
+                  <option value="out-of-stock">Out of stock</option>
+                </select>
+              </label>
+              <label class="filter-field filter-field-select">
+                <span class="filter-label">Rows</span>
+                <select id="inventory-page-size">
+                  <option value="8">8 rows</option>
+                  <option value="20">20 rows</option>
+                  <option value="50">50 rows</option>
+                  <option value="100">100 rows</option>
+                </select>
+              </label>
+              <div class="filter-actions">
+                <button type="button" class="button-link button-link-ghost filter-reset" id="inventory-clear-filters">Clear Filters</button>
+              </div>
+            </div>
+            <div id="inventory-pagination-summary" class="table-summary"></div>
+          </div>
+        </div>
+        <div class="table-wrap elevated-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Brand</th>
+                <th>Model</th>
+                <th>Description</th>
+                <th>Stock Code</th>
+                <th>Stock Balance</th>
+                <th>Unit</th>
+                <th>Location / Consignment Restock</th>
+              </tr>
+            </thead>
+            <tbody id="inventory-table"></tbody>
+          </table>
+        </div>
+        <div class="pagination-bar" id="inventory-pagination"></div>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
