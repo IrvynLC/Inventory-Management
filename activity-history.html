@@ -31,7 +31,7 @@
         <div>
           <p class="eyebrow">Inventory Workspace</p>
           <h1>Inventory Hub</h1>
-          <p class="brand-meta">Simple daily stock control</p>
+          <p class="brand-meta">Operational stock control</p>
         </div>
       </div>
 
@@ -42,35 +42,35 @@
             <span class="nav-icon">HM</span>
             <span class="nav-copy">
               <span class="nav-title">Home</span>
-              <span class="nav-subtitle">Main actions for daily stock work</span>
+              <span class="nav-subtitle">Access core inventory workflows</span>
             </span>
           </a>
           <a class="nav-link" href="inventory.html">
             <span class="nav-icon">IM</span>
             <span class="nav-copy">
               <span class="nav-title">Inventory</span>
-              <span class="nav-subtitle">Overview and stock register</span>
+              <span class="nav-subtitle">Central stock register and availability</span>
             </span>
           </a>
           <a class="nav-link" href="add-stock.html">
             <span class="nav-icon">IN</span>
             <span class="nav-copy">
               <span class="nav-title">Add Stocks</span>
-              <span class="nav-subtitle">Receive incoming stock</span>
+              <span class="nav-subtitle">Record stock-in transactions</span>
             </span>
           </a>
           <a class="nav-link" href="draw-stock.html">
             <span class="nav-icon">OUT</span>
             <span class="nav-copy">
               <span class="nav-title">Draw Stocks</span>
-              <span class="nav-subtitle">Issue stock for use</span>
+              <span class="nav-subtitle">Process stock-out transactions</span>
             </span>
           </a>
           <a class="nav-link active" href="activity-history.html">
             <span class="nav-icon">LOG</span>
             <span class="nav-copy">
               <span class="nav-title">Activity History</span>
-              <span class="nav-subtitle">Audit stock actions and handover forms</span>
+              <span class="nav-subtitle">Review transaction audit records</span>
             </span>
           </a>
         </div>
@@ -80,9 +80,9 @@
     <main class="main-shell">
       <header class="topbar">
         <div class="topbar-copy">
-          <p class="eyebrow">Accountability</p>
-          <h2>Activity history and handover records</h2>
-          <p class="hero-copy">Review who created stock, who added inventory, who drew materials, and open or download the related handover forms.</p>
+          <p class="eyebrow">Audit and Accountability</p>
+          <h2>Inventory transaction history</h2>
+          <p class="hero-copy">Review stock creation, stock-in, and stock-out activity with user accountability, item-level details, and linked handover documentation.</p>
         </div>
         <div class="topbar-actions">
           <a class="button-link" href="index.html">Back to Home</a>
@@ -95,8 +95,8 @@
         <div class="panel-header">
           <div>
             <p class="eyebrow">Audit Filters</p>
-            <h3>Track stock accountability</h3>
-            <p class="section-copy">Filter the activity stream by event type and user to investigate stock changes quickly.</p>
+            <h3>Transaction audit trail</h3>
+            <p class="section-copy">Filter inventory activity by transaction type, user, and date range to support operational review and traceability.</p>
           </div>
           <div class="register-toolbar">
             <div class="table-filters" aria-label="Activity filters">
@@ -115,6 +115,17 @@
                   <option value="all">All users</option>
                 </select>
               </label>
+              <label class="filter-field">
+                <span class="filter-label">From Date</span>
+                <input id="activity-date-from-filter" type="date">
+              </label>
+              <label class="filter-field">
+                <span class="filter-label">To Date</span>
+                <input id="activity-date-to-filter" type="date">
+              </label>
+              <div class="filter-actions">
+                <button class="button-link filter-reset" type="button" id="activity-clear-filters">Clear Filters</button>
+              </div>
             </div>
             <div id="activity-history-summary" class="table-summary"></div>
           </div>

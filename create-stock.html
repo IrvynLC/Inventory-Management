@@ -89,7 +89,7 @@
         <div class="topbar-copy">
           <p class="eyebrow">Create New Stock</p>
           <h2>Add a new inventory item</h2>
-          <p class="hero-copy">Create a brand-new stock record with item details, owned quantity, consignment quantity, and storage location.</p>
+          <p class="hero-copy">Create a brand-new stock record with item details, LC Stock quantity, consign quantity, and storage location.</p>
         </div>
         <div class="topbar-actions">
           <a class="button-link" href="index.html">Back to Home</a>
@@ -102,7 +102,7 @@
           <div>
             <p class="eyebrow">New Item Form</p>
             <h3>Create inventory record</h3>
-            <p class="section-copy">Use this page when you need to add a completely new stock item and separate your stock from consignment stock.</p>
+            <p class="section-copy">Use this page when you need to add a completely new stock item and separate LC Stock from consign stock.</p>
           </div>
         </div>
         <form id="inventory-form" class="stack-form">
@@ -128,11 +128,11 @@
               <input name="unit" type="text" placeholder="pcs / rolls / m" required>
             </label>
             <label>
-              Our stock quantity
+              LC Stock quantity
               <input name="quantity" type="number" min="0" step="1" required>
             </label>
             <label>
-              Consignment stock quantity
+              Consign stock quantity
               <input name="consignmentQuantity" type="number" min="0" step="1" value="0">
             </label>
             <label>
@@ -142,7 +142,7 @@
           </div>
           <div class="form-actions">
             <button type="submit" class="button-primary">Save Item</button>
-            <span class="form-hint">Consignment quantity is stored as the original amount to replenish when it is drawn.</span>
+            <span class="form-hint">Consign quantity is stored as the original amount to replenish when it is drawn.</span>
           </div>
         </form>
       </section>

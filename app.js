@@ -367,9 +367,9 @@ function formatStockBreakdown(item) {
   const total = Number(item.quantity ?? own + consignment);
   const restock = getConsignmentUsed(item);
   if (!consignment && !Number(item.consignmentBaseline ?? 0)) {
-    return `Own ${own}`;
+    return `LC Stock ${own}`;
   }
-  return `Total ${total} | Own ${own} | Consignment ${consignment}${restock ? ` (${restock} to restock)` : ""}`;
+  return `Total ${total} | LC Stock ${own} | Consign ${consignment}${restock ? ` (${restock} to restock)` : ""}`;
 }
 
 function renderStockBreakdownChips(item) {
@@ -378,11 +378,11 @@ function renderStockBreakdownChips(item) {
   const total = Number(item.quantity ?? own + consignment);
   const hasConsignment = consignment > 0 || Number(item.consignmentBaseline ?? 0) > 0;
   if (!hasConsignment) {
-    return `<span class="inline-stock-chip inline-stock-chip-own">Own <strong>${own}</strong></span>`;
+    return `<span class="inline-stock-chip inline-stock-chip-own">LC Stock <strong>${own}</strong></span>`;
   }
   return `
     <span class="inline-stock-chip inline-stock-chip-total">Total <strong>${total}</strong></span>
-    <span class="inline-stock-chip inline-stock-chip-own">Own <strong>${own}</strong></span>
+    <span class="inline-stock-chip inline-stock-chip-own">LC Stock <strong>${own}</strong></span>
     <span class="inline-stock-chip inline-stock-chip-consign">Consign <strong>${consignment}</strong></span>
   `;
 }
@@ -391,6 +391,7 @@ function renderInventoryBalanceCell(item) {
   const total = Number(item.quantity ?? 0);
   const own = Number(item.ownQuantity ?? item.quantity ?? 0);
   const consignment = Number(item.consignmentQuantity ?? 0);
+  const hasConsign = consignment > 0 || Number(item.consignmentBaseline ?? 0) > 0;
   return `
     <div class="stock-balance-cell">
       <div class="stock-total">
@@ -398,8 +399,8 @@ function renderInventoryBalanceCell(item) {
         <span>${escapeHtml(item.unit ?? "units")} total</span>
       </div>
       <div class="stock-split" aria-label="Stock ownership split">
-        <span class="stock-chip stock-chip-own">Own <strong>${own}</strong></span>
-        <span class="stock-chip stock-chip-consign">Consign <strong>${consignment}</strong></span>
+        <span class="stock-chip stock-chip-own">LC Stock <strong>${own}</strong></span>
+        ${hasConsign ? `<span class="stock-chip stock-chip-consign">Consign <strong>${consignment}</strong></span>` : ""}
       </div>
     </div>
   `;
@@ -413,6 +414,98 @@ function renderConsignmentRestockCell(item) {
       ${restock ? `<span class="stock-restock stock-restock-alert">Need restock: ${escapeHtml(String(restock))}</span>` : ""}
     </div>
   `;
+}
+
+function getReceivingPurposeLabel(purpose) {
+  if (purpose === "consignment") return "Supplier consign stock";
+  return "LC Stock";
+}
+
+function calculateStockInAllocation(item, quantity, purpose = "own") {
+  const receivedQuantity = Math.max(Number(quantity || 0), 0);
+  const consignmentShortfall = item ? getConsignmentUsed(item) : 0;
+
+  if (purpose === "consignment") {
+    return {
+      ownQuantity: 0,
+      consignmentQuantity: receivedQuantity,
+      consignmentShortfall,
+      extraConsignmentQuantity: consignmentShortfall ? Math.max(receivedQuantity - consignmentShortfall, 0) : 0
+    };
+  }
+
+  return {
+    ownQuantity: receivedQuantity,
+    consignmentQuantity: 0,
+    consignmentShortfall,
+    extraConsignmentQuantity: 0
+  };
+}
+
+function formatStockInAllocation(item, quantity, purpose = "own") {
+  const allocation = calculateStockInAllocation(item, quantity, purpose);
+  const parts = [];
+  if (allocation.consignmentQuantity > 0) {
+    parts.push(`${allocation.consignmentQuantity} to consign`);
+  }
+  if (allocation.ownQuantity > 0) {
+    parts.push(`${allocation.ownQuantity} to LC Stock`);
+  }
+  if (!parts.length) return "No quantity allocated";
+
+  const warning = allocation.extraConsignmentQuantity > 0
+    ? ` (${allocation.extraConsignmentQuantity} above current consign restock need)`
+    : "";
+  return `${parts.join(" | ")}${warning}`;
+}
+
+function renderStockInAllocationChips(item, quantity, purpose = "own") {
+  const allocation = calculateStockInAllocation(item, quantity, purpose);
+  const chips = [];
+
+  if (allocation.consignmentQuantity > 0) {
+    chips.push(`<span class="inline-stock-chip inline-stock-chip-consign">Consign</span>`);
+  }
+  if (allocation.ownQuantity > 0) {
+    chips.push(`<span class="inline-stock-chip inline-stock-chip-own">LC Stock</span>`);
+  }
+  if (allocation.extraConsignmentQuantity > 0) {
+    chips.push(`<span class="inline-stock-chip inline-stock-chip-alert">Extra consign <strong>${allocation.extraConsignmentQuantity}</strong></span>`);
+  }
+  if (!chips.length) {
+    chips.push(`<span class="inline-stock-chip inline-stock-chip-total">None <strong>0</strong></span>`);
+  }
+
+  const restockQuantity = item ? getConsignmentUsed(item) : 0;
+  const restockChip = restockQuantity > 0
+    ? `<span class="inline-stock-chip inline-stock-chip-alert">Restock needed <strong>${restockQuantity}</strong></span>`
+    : "";
+
+  return `
+    <div class="stock-allocation-cell">
+      <div class="stock-allocation-chips">${chips.join("")}${restockChip}</div>
+    </div>
+  `;
+}
+
+function calculateStockOutAllocation(item, quantity) {
+  const issueQuantity = Math.max(Number(quantity || 0), 0);
+  const lcAvailable = Math.max(Number(item?.ownQuantity ?? item?.quantity ?? 0), 0);
+  const consignmentAvailable = Math.max(Number(item?.consignmentQuantity ?? 0), 0);
+  const lcQuantity = Math.min(issueQuantity, lcAvailable);
+  const consignmentQuantity = Math.min(Math.max(issueQuantity - lcQuantity, 0), consignmentAvailable);
+  return {
+    lcQuantity,
+    consignmentQuantity,
+    remainingShortfall: Math.max(issueQuantity - lcQuantity - consignmentQuantity, 0)
+  };
+}
+
+function renderConsignmentDrawNotice(item, quantity) {
+  const allocation = calculateStockOutAllocation(item, quantity);
+  if (allocation.consignmentQuantity <= 0) return "";
+
+  return `${allocation.consignmentQuantity} from consign`;
 }
 
 function createItemSnapshot(item) {
@@ -523,17 +616,132 @@ function escapeHtml(text) {
     .replaceAll("'", "&#39;");
 }
 
-function createNotice(message) {
+function createNotice(message, variant = "") {
   const notice = document.createElement("div");
-  notice.className = "notice";
+  notice.className = ["notice", variant ? `notice-${variant}` : ""].filter(Boolean).join(" ");
   notice.textContent = message;
   return notice;
 }
 
-function showNotice(target, message) {
+function showNotice(target, message, variant = "") {
   const existing = target.querySelector(".notice");
   if (existing) existing.remove();
-  target.prepend(createNotice(message));
+  target.prepend(createNotice(message, variant));
+}
+
+function showToast(message, variant = "success") {
+  const existing = document.querySelector(".toast-notice");
+  if (existing) existing.remove();
+
+  const toast = document.createElement("div");
+  toast.className = `toast-notice toast-notice-${variant}`;
+  toast.setAttribute("role", "status");
+  toast.innerHTML = `
+    <span class="toast-notice-icon" aria-hidden="true">✓</span>
+    <span>${escapeHtml(message)}</span>
+  `;
+  document.body.append(toast);
+  requestAnimationFrame(() => toast.classList.add("is-visible"));
+
+  setTimeout(() => {
+    toast.classList.remove("is-visible");
+    setTimeout(() => toast.remove(), 220);
+  }, 3600);
+}
+
+function showStockInConfirmationDialog(lines) {
+  return new Promise((resolve) => {
+    const totalQuantity = lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+    const totalLineItems = lines.length;
+    const lcLines = lines.filter((line) => line.receivingPurpose === "own");
+    const consignmentLines = lines.filter((line) => line.receivingPurpose === "consignment");
+    const lcQuantity = lines
+      .filter((line) => line.receivingPurpose === "own")
+      .reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+    const consignmentQuantity = lines
+      .filter((line) => line.receivingPurpose === "consignment")
+      .reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+    const renderSection = (title, sectionLines, variant) => `
+      <section class="confirm-category-section confirm-category-${variant}">
+        <div class="confirm-category-header">
+          <h4>${escapeHtml(title)}</h4>
+          <span>${sectionLines.length} item line${sectionLines.length === 1 ? "" : "s"}</span>
+        </div>
+        ${sectionLines.length
+          ? `<div class="confirm-line-list">
+              ${sectionLines.map((line) => `
+                <div class="confirm-line-item">
+                  <div>
+                    <strong>${escapeHtml(line.name)}</strong>
+                    <span>${escapeHtml(line.sku)} | ${escapeHtml(line.brand)} / ${escapeHtml(line.model)}</span>
+                  </div>
+                  <div class="confirm-line-result">
+                    <span class="inline-stock-chip ${variant === "consignment" ? "inline-stock-chip-consign" : "inline-stock-chip-own"}">
+                      Qty <strong>${escapeHtml(String(line.quantity))}</strong>
+                    </span>
+                  </div>
+                </div>
+              `).join("")}
+            </div>`
+          : `<div class="confirm-empty-category">No items selected for this category.</div>`}
+      </section>
+    `;
+    const modal = document.createElement("div");
+    modal.className = "confirm-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-labelledby", "stock-in-confirm-title");
+    modal.innerHTML = `
+      <div class="confirm-modal-backdrop" data-confirm-cancel></div>
+      <div class="confirm-dialog stock-in-confirm-dialog">
+        <div class="confirm-dialog-header">
+          <div>
+            <p class="eyebrow">Review Stock In</p>
+            <h3 id="stock-in-confirm-title">Confirm stock category</h3>
+            <p class="section-copy">Check each item before updating inventory balances.</p>
+          </div>
+        </div>
+        <div class="confirm-summary-grid" aria-label="Stock in summary">
+          <div class="confirm-summary-card"><strong>${totalLineItems}</strong><span>Total line item</span></div>
+          <div class="confirm-summary-card"><strong>${lcQuantity}</strong><span>To LC Stock</span></div>
+          <div class="confirm-summary-card"><strong>${consignmentQuantity}</strong><span>To consign</span></div>
+        </div>
+        <div class="confirm-category-grid">
+          ${renderSection("Adding to LC Stock", lcLines, "lc")}
+          ${renderSection("Adding to Supplier Consign", consignmentLines, "consignment")}
+        </div>
+        <div class="confirm-dialog-actions">
+          <button type="button" class="button-link" data-confirm-cancel>Review Again</button>
+          <button type="button" class="button-primary" data-confirm-submit>Confirm Add Stock</button>
+        </div>
+      </div>
+    `;
+
+    const close = (confirmed) => {
+      document.removeEventListener("keydown", handleKeydown);
+      modal.classList.remove("is-open");
+      setTimeout(() => modal.remove(), 180);
+      document.body.classList.remove("modal-open");
+      resolve(confirmed);
+    };
+
+    document.body.append(modal);
+    document.body.classList.add("modal-open");
+    requestAnimationFrame(() => modal.classList.add("is-open"));
+    modal.querySelector("[data-confirm-submit]")?.focus();
+
+    modal.querySelectorAll("[data-confirm-cancel]").forEach((element) => {
+      element.addEventListener("click", () => close(false));
+    });
+    modal.querySelector("[data-confirm-submit]")?.addEventListener("click", () => close(true));
+
+    function handleKeydown(event) {
+      if (event.key === "Escape") {
+        close(false);
+      }
+    }
+    document.addEventListener("keydown", handleKeydown);
+  });
 }
 
 function formatDateTime(value) {
@@ -1025,16 +1233,18 @@ function getStockPickerSearchText(item) {
   ].map((value) => String(value ?? "").toLowerCase()).join(" ");
 }
 
-function renderStockPickerList(container, inventory, selectedId, searchTerm = "") {
+function renderStockPickerList(container, inventory, selectedId, searchTerm = "", options = {}) {
   if (!container) return;
+  const onlyInStock = options.onlyInStock !== false;
+  const emptyMessage = options.emptyMessage ?? "No available stock matches your search.";
   const normalizedSearch = searchTerm.trim().toLowerCase();
   const availableItems = inventory
-    .filter((item) => item.quantity > 0)
+    .filter((item) => !onlyInStock || item.quantity > 0)
     .filter((item) => !normalizedSearch || getStockPickerSearchText(item).includes(normalizedSearch))
     .sort((a, b) => String(a.model ?? "").localeCompare(String(b.model ?? "")) || String(a.name ?? "").localeCompare(String(b.name ?? "")));
 
   if (!availableItems.length) {
-    container.innerHTML = `<div class="stock-picker-empty">No available stock matches your search.</div>`;
+    container.innerHTML = `<div class="stock-picker-empty">${escapeHtml(emptyMessage)}</div>`;
     return;
   }
 
@@ -1063,7 +1273,7 @@ function renderStockPickerList(container, inventory, selectedId, searchTerm = ""
           <span>${escapeHtml(item.brand ?? "Generic")} / ${escapeHtml(item.sku ?? "-")} / ${escapeHtml(item.location ?? "Main Store")}</span>
         </span>
         <span class="stock-picker-option-metrics">
-          <span class="stock-picker-chip-own">Own <strong>${ownQuantity}</strong></span>
+          <span class="stock-picker-chip-own">LC Stock <strong>${ownQuantity}</strong></span>
           ${consignmentMetrics}
           ${totalMetric}
         </span>
@@ -1072,17 +1282,28 @@ function renderStockPickerList(container, inventory, selectedId, searchTerm = ""
   }).join("");
 }
 
-function updateStockPickerButton(button, item) {
+function updateStockPickerButton(button, item, options = {}) {
   if (!button) return;
+  const quantityLabel = options.quantityLabel ?? "available";
+  const placeholderMeta = options.placeholderMeta ?? "Search by description, SKU, brand, or category";
   button.innerHTML = item
     ? `
       <span class="stock-picker-button-title">${escapeHtml(item.name)}</span>
-      <span class="stock-picker-button-meta">${escapeHtml(item.sku ?? "-")} | ${Number(item.quantity ?? 0)} ${escapeHtml(item.unit ?? "")} available</span>
+      <span class="stock-picker-button-meta">${escapeHtml(item.sku ?? "-")} | ${Number(item.quantity ?? 0)} ${escapeHtml(item.unit ?? "")} ${escapeHtml(quantityLabel)}</span>
     `
     : `
       <span class="stock-picker-button-title">Select an item</span>
-      <span class="stock-picker-button-meta">Search by description, SKU, brand, or category</span>
+      <span class="stock-picker-button-meta">${escapeHtml(placeholderMeta)}</span>
     `;
+}
+
+function updateConsignmentRestockNotice(notice, item) {
+  if (!notice) return;
+  const restockQuantity = item ? getConsignmentUsed(item) : 0;
+  notice.hidden = restockQuantity <= 0;
+  notice.textContent = restockQuantity > 0
+    ? `This item has consign stock to restock: ${restockQuantity}. Choose Supplier consign stock if this delivery is for consign.`
+    : "";
 }
 
 function normalizeStockOutItems(record, inventory) {
@@ -1144,9 +1365,16 @@ function renderStockOutIssueList(container, emptyState, summary, inventory) {
 
   rows.forEach((row) => {
     const item = inventory.find((entry) => entry.id === row.dataset.itemId);
+    const qty = Number(row.querySelector('input[name="issueQuantity"]')?.value ?? "0");
     const availableCell = row.querySelector("[data-stock-out-available]");
     if (availableCell) {
       availableCell.innerHTML = item ? renderStockBreakdownChips(item) : "-";
+    }
+    const consignmentNotice = row.querySelector("[data-stock-out-consignment-notice]");
+    if (consignmentNotice) {
+      const noticeText = item ? renderConsignmentDrawNotice(item, qty) : "";
+      consignmentNotice.hidden = !noticeText;
+      consignmentNotice.textContent = noticeText;
     }
   });
 
@@ -1168,19 +1396,53 @@ function getActivityEvents(data) {
     actions: []
   }));
 
-  const stockIns = data.adjustments.map((entry) => {
-    const item = data.inventory.find((record) => record.id === entry.itemId);
+  const stockInGroups = data.adjustments.reduce((groups, entry) => {
+    const groupKey = entry.stockInSessionId
+      ?? `${entry.createdAt ?? ""}|${entry.actorUserId ?? entry.actorName ?? ""}`;
+    if (!groups.has(groupKey)) groups.set(groupKey, []);
+    groups.get(groupKey).push(entry);
+    return groups;
+  }, new Map());
+
+  const stockIns = Array.from(stockInGroups.entries()).map(([groupKey, entries]) => {
+    const firstEntry = entries[0] ?? {};
+    const itemRows = entries.map((entry) => {
+      const item = data.inventory.find((record) => record.id === entry.itemId);
+      return {
+        entry,
+        item,
+        itemName: item?.name ?? "Deleted item",
+        itemLine: `${item?.name ?? "Deleted item"} (${entry.stockType === "consignment" ? "Consign" : "LC Stock"} +${entry.quantity})`
+      };
+    });
+    const totalQuantity = entries.reduce((sum, entry) => sum + Number(entry.quantity || 0), 0);
+    const lcQuantity = entries
+      .filter((entry) => entry.stockType !== "consignment")
+      .reduce((sum, entry) => sum + Number(entry.quantity || 0), 0);
+    const consignQuantity = entries
+      .filter((entry) => entry.stockType === "consignment")
+      .reduce((sum, entry) => sum + Number(entry.quantity || 0), 0);
+    const detailParts = [];
+    if (lcQuantity) detailParts.push(`${lcQuantity} to LC Stock`);
+    if (consignQuantity) detailParts.push(`${consignQuantity} to Consign`);
+    const detailHtml = `
+      <div class="activity-stock-in-split">
+        ${lcQuantity ? `<span class="inline-stock-chip inline-stock-chip-own">LC Stock <strong>${lcQuantity}</strong></span>` : ""}
+        ${consignQuantity ? `<span class="inline-stock-chip inline-stock-chip-consign">Consign <strong>${consignQuantity}</strong></span>` : ""}
+      </div>
+    `;
     return {
-      id: `adjust-${entry.id}`,
+      id: `adjust-${groupKey}`,
       type: "stock-in",
-      sourceId: entry.id,
+      sourceId: groupKey,
       title: "Stock Added",
-      actor: entry.actorName ?? "Unknown User",
-      itemSummary: item?.name ?? "Deleted item",
-      itemLines: [item?.name ?? "Deleted item"],
-      detail: `${item?.sku ?? "-"} | ${entry.remarks || "No remarks provided"}`,
-      quantityText: `+${entry.quantity} ${entry.stockType === "consignment" ? "consignment" : "own"}`,
-      createdAt: entry.createdAt,
+      actor: firstEntry.actorName ?? "Unknown User",
+      itemSummary: itemRows.map((row) => row.itemName).join(", "),
+      itemLines: itemRows.map((row) => row.itemLine),
+      detail: detailParts.length ? detailParts.join(" | ") : "No stock quantity recorded",
+      detailHtml,
+      quantityText: `+${totalQuantity}`,
+      createdAt: firstEntry.createdAt,
       actions: []
     };
   });
@@ -1200,7 +1462,7 @@ function getActivityEvents(data) {
       itemSummary,
       itemLines,
       detail: `Document ${entry.documentNo} | Received by ${entry.receivedBy}`,
-      quantityText: `-${totalQuantity}${consignmentQuantity ? ` (${consignmentQuantity} consignment)` : ""}`,
+      quantityText: `-${totalQuantity}${consignmentQuantity ? ` (${consignmentQuantity} consign)` : ""}`,
       createdAt: entry.createdAt,
       actions: [
         { kind: "view-handover", label: "View Form", stockOutId: entry.id },
@@ -1227,9 +1489,9 @@ function getActivityDetailRecord(type, id, data) {
         { label: "Brand", value: item.brand ?? "Generic" },
         { label: "Model", value: item.model ?? "Standard" },
         { label: "Stock Code", value: item.sku ?? "-" },
-        { label: "Own Stock", value: item.ownQuantity ?? item.quantity ?? 0 },
-        { label: "Consignment Available", value: item.consignmentQuantity ?? 0 },
-        { label: "Consignment To Restock", value: getConsignmentUsed(item) },
+        { label: "LC Stock", value: item.ownQuantity ?? item.quantity ?? 0 },
+        { label: "Consign Available", value: item.consignmentQuantity ?? 0 },
+        { label: "Consign To Restock", value: getConsignmentUsed(item) },
         { label: "Location", value: item.location ?? "Main Store" }
       ],
       itemRows: [{
@@ -1249,33 +1511,58 @@ function getActivityDetailRecord(type, id, data) {
   }
 
   if (type === "stock-in") {
-    const adjustment = data.adjustments.find((entry) => entry.id === id);
-    if (!adjustment) return null;
-    const item = data.inventory.find((entry) => entry.id === adjustment.itemId);
+    let adjustments = data.adjustments.filter((entry) => entry.stockInSessionId === id);
+    if (!adjustments.length) {
+      const directAdjustment = data.adjustments.find((entry) => entry.id === id);
+      if (directAdjustment) {
+        const fallbackKey = `${directAdjustment.createdAt ?? ""}|${directAdjustment.actorUserId ?? directAdjustment.actorName ?? ""}`;
+        adjustments = data.adjustments.filter((entry) => {
+          const entryKey = `${entry.createdAt ?? ""}|${entry.actorUserId ?? entry.actorName ?? ""}`;
+          return entryKey === fallbackKey;
+        });
+      } else {
+        adjustments = data.adjustments.filter((entry) => {
+          const entryKey = entry.stockInSessionId ?? `${entry.createdAt ?? ""}|${entry.actorUserId ?? entry.actorName ?? ""}`;
+          return entryKey === id;
+        });
+      }
+    }
+    if (!adjustments.length) return null;
+    const firstAdjustment = adjustments[0];
+    const totalQuantity = adjustments.reduce((sum, adjustment) => sum + Number(adjustment.quantity || 0), 0);
+    const lcQuantity = adjustments
+      .filter((adjustment) => adjustment.stockType !== "consignment")
+      .reduce((sum, adjustment) => sum + Number(adjustment.quantity || 0), 0);
+    const consignQuantity = adjustments
+      .filter((adjustment) => adjustment.stockType === "consignment")
+      .reduce((sum, adjustment) => sum + Number(adjustment.quantity || 0), 0);
     return {
       type,
       title: "Stock-In Record",
-      actor: adjustment.actorName ?? "Unknown User",
-      createdAt: adjustment.createdAt,
-      summary: item?.name ?? "Deleted item",
+      actor: firstAdjustment.actorName ?? "Unknown User",
+      createdAt: firstAdjustment.createdAt,
+      summary: `${adjustments.length} stock-in line${adjustments.length === 1 ? "" : "s"}`,
       detailRows: [
-        { label: "Stock Code", value: item?.sku ?? "-" },
-        { label: "Transaction Type", value: adjustment.stockType === "consignment" ? "Consignment Stock In" : "Own Stock In" },
-        { label: "Quantity Added", value: `+${adjustment.quantity}` },
-        { label: "Remarks", value: adjustment.remarks || "No remarks provided" }
+        { label: "Total Quantity Added", value: `+${totalQuantity}` },
+        { label: "LC Stock Added", value: `+${lcQuantity}` },
+        { label: "Consign Added", value: `+${consignQuantity}` },
+        { label: "Remarks", value: firstAdjustment.remarks || "No remarks provided" }
       ],
-      itemRows: [{
-        brand: item?.brand ?? "Generic",
-        model: item?.model ?? "Standard",
-        name: item?.name ?? "Deleted item",
-        sku: item?.sku ?? "-",
-        quantity: adjustment.quantity ?? 0,
-        ownQuantity: adjustment.stockType === "consignment" ? 0 : adjustment.quantity ?? 0,
-        consignmentQuantity: adjustment.stockType === "consignment" ? adjustment.quantity ?? 0 : 0,
-        consignmentToRestock: item ? getConsignmentUsed(item) : 0,
-        unit: item?.unit ?? "-",
-        location: item?.location ?? "Main Store"
-      }],
+      itemRows: adjustments.map((adjustment) => {
+        const item = data.inventory.find((entry) => entry.id === adjustment.itemId);
+        return {
+          brand: item?.brand ?? "Generic",
+          model: item?.model ?? "Standard",
+          name: item?.name ?? "Deleted item",
+          sku: item?.sku ?? "-",
+          quantity: adjustment.quantity ?? 0,
+          ownQuantity: adjustment.stockType === "consignment" ? 0 : adjustment.quantity ?? 0,
+          consignmentQuantity: adjustment.stockType === "consignment" ? adjustment.quantity ?? 0 : 0,
+          consignmentToRestock: item ? getConsignmentUsed(item) : 0,
+          unit: item?.unit ?? "-",
+          location: item?.location ?? "Main Store"
+        };
+      }),
       handoverId: null
     };
   }
@@ -1294,7 +1581,7 @@ function getActivityDetailRecord(type, id, data) {
         { label: "Document No", value: stockOut.documentNo ?? "-" },
         { label: "Project Title", value: stockOut.projectTitle ?? "-" },
         { label: "Received By", value: stockOut.receivedBy ?? "-" },
-        { label: "Consignment Issued", value: items.reduce((sum, line) => sum + Number(line.consignmentQuantity || 0), 0) }
+        { label: "Consign Issued", value: items.reduce((sum, line) => sum + Number(line.consignmentQuantity || 0), 0) }
       ],
       itemRows: items.map((line) => ({
         brand: line.itemSnapshot?.brand ?? "-",
@@ -1338,7 +1625,7 @@ function buildHandoverDocumentMarkup(record, items) {
       <div>
         <p><strong>Total Items:</strong> ${items.length}</p>
         <p><strong>Total Quantity Issued:</strong> ${totalIssuedQuantity}</p>
-        <p><strong>Consignment Issued:</strong> ${totalConsignmentIssued}</p>
+        <p><strong>Consign Issued:</strong> ${totalConsignmentIssued}</p>
         <p><strong>Project Title:</strong> ${escapeHtml(record.projectTitle ?? "-")}</p>
       </div>
       <div>
@@ -1358,8 +1645,8 @@ function buildHandoverDocumentMarkup(record, items) {
             <th>Description</th>
             <th>Stock Code</th>
             <th>Quantity</th>
-            <th>Own</th>
-            <th>Consignment</th>
+            <th>LC Stock</th>
+            <th>Consign</th>
             <th>Unit</th>
           </tr>
         </thead>
@@ -1390,7 +1677,7 @@ function buildHandoverDocumentMarkup(record, items) {
       </div>
       <div>
         <p><strong>Items Issued:</strong> ${items.map((line) => escapeHtml(line.itemSnapshot?.name ?? "Item")).join("<br>")}</p>
-        <p><strong>Remaining Balance Snapshot:</strong><br>${items.map((line) => `${escapeHtml(line.itemSnapshot?.sku ?? "-")}: ${Math.max(line.balanceAfter ?? 0, 0)} total, ${Math.max(line.consignmentToRestock ?? 0, 0)} consignment to restock`).join("<br>")}</p>
+        <p><strong>Remaining Balance Snapshot:</strong><br>${items.map((line) => `${escapeHtml(line.itemSnapshot?.sku ?? "-")}: ${Math.max(line.balanceAfter ?? 0, 0)} total, ${Math.max(line.consignmentToRestock ?? 0, 0)} consign to restock`).join("<br>")}</p>
       </div>
     </section>
 
@@ -1454,9 +1741,17 @@ function renderAdjustmentIssueList(container, emptyState, summary, inventory) {
 
   rows.forEach((row) => {
     const item = inventory.find((entry) => entry.id === row.dataset.itemId);
+    const purpose = row.dataset.receivingPurpose === "consignment" ? "consignment" : "own";
+    const qty = Number(row.querySelector('input[name="adjustmentQuantity"]')?.value ?? "0");
     const stockCell = row.querySelector("[data-adjustment-current-stock]");
     if (stockCell) {
-      stockCell.textContent = item ? formatStockBreakdown(item) : "-";
+      stockCell.innerHTML = item ? renderStockBreakdownChips(item) : "-";
+    }
+    const allocationCell = row.querySelector("[data-adjustment-allocation]");
+    if (allocationCell) {
+      allocationCell.innerHTML = item
+        ? renderStockInAllocationChips(item, qty, purpose)
+        : "-";
     }
   });
 
@@ -1541,8 +1836,8 @@ function renderInventoryPage() {
   if (summary) {
     summary.innerHTML = `
       <div class="summary-line"><strong>${data.inventory.length}</strong><span>Items in register</span></div>
-      <div class="summary-line"><strong>${totalQuantity}</strong><span>Total on hand (${totalOwnQuantity} own / ${totalConsignmentQuantity} consignment)</span></div>
-      <div class="summary-line"><strong>${totalConsignmentToRestock}</strong><span>Consignment to restock</span></div>
+      <div class="summary-line"><strong>${totalQuantity}</strong><span>Total on hand (${totalOwnQuantity} LC Stock / ${totalConsignmentQuantity} consign)</span></div>
+      <div class="summary-line"><strong>${totalConsignmentToRestock}</strong><span>Consign to restock</span></div>
     `;
   }
 
@@ -1709,17 +2004,30 @@ function renderActivityHistoryPage() {
   const activitySummary = document.querySelector("#activity-history-summary");
   const typeFilter = document.querySelector("#activity-type-filter");
   const actorFilter = document.querySelector("#activity-actor-filter");
-  if (!activityTableBody || !activitySummary || !typeFilter || !actorFilter) return;
+  const dateFromFilter = document.querySelector("#activity-date-from-filter");
+  const dateToFilter = document.querySelector("#activity-date-to-filter");
+  const clearFiltersButton = document.querySelector("#activity-clear-filters");
+  if (!activityTableBody || !activitySummary || !typeFilter || !actorFilter || !dateFromFilter || !dateToFilter) return;
 
-  const typeKey = "ims-activity-type-filter";
-  const actorKey = "ims-activity-actor-filter";
+  const dateFromKey = "ims-activity-date-from-filter";
+  const dateToKey = "ims-activity-date-to-filter";
+  localStorage.removeItem("ims-activity-type-filter");
+  localStorage.removeItem("ims-activity-actor-filter");
   const allEvents = getActivityEvents(data);
   const actors = Array.from(new Set(allEvents.map((event) => event.actor).filter(Boolean))).sort((a, b) => a.localeCompare(b));
-  const selectedType = typeFilter.value || localStorage.getItem(typeKey) || "all";
-  const selectedActor = actorFilter.value || localStorage.getItem(actorKey) || "all";
+  const selectedType = typeFilter.value || "all";
+  const selectedActor = actorFilter.value || "all";
+  const selectedDateFrom = dateFromFilter.value || localStorage.getItem(dateFromKey) || "";
+  const selectedDateTo = dateToFilter.value || localStorage.getItem(dateToKey) || "";
 
   if (typeFilter.value !== selectedType) {
     typeFilter.value = selectedType;
+  }
+  if (dateFromFilter.value !== selectedDateFrom) {
+    dateFromFilter.value = selectedDateFrom;
+  }
+  if (dateToFilter.value !== selectedDateTo) {
+    dateToFilter.value = selectedDateTo;
   }
 
   actorFilter.innerHTML = `
@@ -1733,15 +2041,38 @@ function renderActivityHistoryPage() {
     actorFilter.value = "all";
   }
 
-  const filteredEvents = allEvents.filter((event) => {
+  const filterEvents = (dateFrom, dateTo) => allEvents.filter((event) => {
+    const eventDate = new Date(event.createdAt);
+    const fromDate = dateFrom ? new Date(`${dateFrom}T00:00:00`) : null;
+    const toDate = dateTo ? new Date(`${dateTo}T23:59:59.999`) : null;
     if (selectedType !== "all" && event.type !== selectedType) return false;
     if (actorFilter.value !== "all" && event.actor !== actorFilter.value) return false;
+    if (Number.isNaN(eventDate.getTime())) return !fromDate && !toDate;
+    if (fromDate && eventDate < fromDate) return false;
+    if (toDate && eventDate > toDate) return false;
     return true;
   });
 
+  let filteredEvents = filterEvents(selectedDateFrom, selectedDateTo);
+  const hasDateFilter = Boolean(selectedDateFrom || selectedDateTo);
+
+  if (!filteredEvents.length && allEvents.length && hasDateFilter && filterEvents("", "").length) {
+    localStorage.removeItem(dateFromKey);
+    localStorage.removeItem(dateToKey);
+    dateFromFilter.value = "";
+    dateToFilter.value = "";
+    filteredEvents = filterEvents("", "");
+  }
+
+  const hasActiveActivityFilters = selectedType !== "all"
+    || actorFilter.value !== "all"
+    || Boolean(dateFromFilter.value || dateToFilter.value);
+
   activitySummary.textContent = filteredEvents.length
     ? `${filteredEvents.length} accountability event${filteredEvents.length === 1 ? "" : "s"} shown`
-    : "No activity matched the selected filters";
+    : hasActiveActivityFilters
+      ? "No activity matched the selected filters. Clear filters to show all activity."
+      : "No activity has been recorded yet";
 
   activityTableBody.innerHTML = filteredEvents.length
     ? filteredEvents.map((event) => `
@@ -1760,7 +2091,7 @@ function renderActivityHistoryPage() {
           <td>${escapeHtml(event.actor)}</td>
           <td>
             <div class="activity-detail-cell">
-              <span>${escapeHtml(event.detail)}</span>
+              ${event.detailHtml ?? `<span>${escapeHtml(event.detail)}</span>`}
               <a class="button-link" href="activity-detail.html?type=${encodeURIComponent(event.type)}&id=${encodeURIComponent(event.sourceId)}">View Details</a>
             </div>
           </td>
@@ -1776,7 +2107,11 @@ function renderActivityHistoryPage() {
           </td>
         </tr>
       `).join("")
-    : `<tr><td colspan="7"><div class="empty-state">No stock creation, stock-in, or stock-out activity has been recorded for the current filters.</div></td></tr>`;
+    : `<tr><td colspan="7"><div class="empty-state">${
+        hasActiveActivityFilters
+          ? "No stock creation, stock-in, or stock-out activity matched the selected filters."
+          : "No stock creation, stock-in, or stock-out activity has been recorded yet."
+      }</div></td></tr>`;
 
   activityTableBody.querySelectorAll("[data-download-handover]").forEach((button) => {
     if (button.dataset.bound) return;
@@ -1786,7 +2121,6 @@ function renderActivityHistoryPage() {
 
   if (!typeFilter.dataset.bound) {
     typeFilter.addEventListener("change", () => {
-      localStorage.setItem(typeKey, typeFilter.value);
       renderActivityHistoryPage();
     });
     typeFilter.dataset.bound = "true";
@@ -1794,10 +2128,37 @@ function renderActivityHistoryPage() {
 
   if (!actorFilter.dataset.bound) {
     actorFilter.addEventListener("change", () => {
-      localStorage.setItem(actorKey, actorFilter.value);
       renderActivityHistoryPage();
     });
     actorFilter.dataset.bound = "true";
+  }
+
+  [
+    [dateFromFilter, dateFromKey],
+    [dateToFilter, dateToKey]
+  ].forEach(([filter, key]) => {
+    if (filter.dataset.bound) return;
+    filter.addEventListener("change", () => {
+      if (filter.value) {
+        localStorage.setItem(key, filter.value);
+      } else {
+        localStorage.removeItem(key);
+      }
+      renderActivityHistoryPage();
+    });
+    filter.dataset.bound = "true";
+  });
+
+  if (clearFiltersButton && !clearFiltersButton.dataset.bound) {
+    clearFiltersButton.addEventListener("click", () => {
+      [dateFromKey, dateToKey].forEach((key) => localStorage.removeItem(key));
+      typeFilter.value = "all";
+      actorFilter.value = "all";
+      dateFromFilter.value = "";
+      dateToFilter.value = "";
+      renderActivityHistoryPage();
+    });
+    clearFiltersButton.dataset.bound = "true";
   }
 }
 
@@ -1851,26 +2212,112 @@ function initAddStockPage() {
   const adjustmentLines = document.querySelector("#adjustment-lines");
   const adjustmentEmpty = document.querySelector("#adjustment-empty");
   const adjustmentSummary = document.querySelector("#adjustment-summary");
+  const adjustStockPicker = document.querySelector("[data-adjust-stock-picker]");
+  const adjustStockPickerButton = document.querySelector("#adjust-stock-picker-button");
+  const adjustStockPickerPopover = document.querySelector("#adjust-stock-picker-popover");
+  const adjustStockPickerSearch = document.querySelector("#adjust-stock-picker-search");
+  const adjustStockPickerList = document.querySelector("#adjust-stock-picker-list");
+  const adjustConsignmentRestockNotice = document.querySelector("#adjust-consignment-restock-notice");
   const addAdjustmentLineButton = document.querySelector("#add-adjustment-line");
   const adjustmentForm = document.querySelector("#adjustment-form");
   if (!content || !adjustItemSelect || !adjustQuantityInput || !adjustStockTypeSelect || !adjustmentLines || !adjustmentEmpty || !adjustmentSummary || !addAdjustmentLineButton || !adjustmentForm) return;
 
   const refreshAddStockOptions = () => {
     const data = loadData();
+    const currentValue = adjustItemSelect.value;
     adjustItemSelect.innerHTML = data.inventory.length
       ? buildAdjustmentOptions(data.inventory)
       : `<option value="">No inventory items available</option>`;
+
+    if (currentValue && Array.from(adjustItemSelect.options).some((option) => option.value === currentValue)) {
+      adjustItemSelect.value = currentValue;
+    }
+
+    const selectedItem = data.inventory.find((item) => item.id === adjustItemSelect.value);
+    renderStockPickerList(adjustStockPickerList, data.inventory, adjustItemSelect.value, adjustStockPickerSearch?.value ?? "", {
+      onlyInStock: false,
+      emptyMessage: "No inventory items match your search."
+    });
+    updateStockPickerButton(adjustStockPickerButton, selectedItem, { quantityLabel: "current" });
+    updateConsignmentRestockNotice(adjustConsignmentRestockNotice, selectedItem);
     renderAdjustmentIssueList(adjustmentLines, adjustmentEmpty, adjustmentSummary, data.inventory);
   };
 
   refreshAddStockOptions();
 
   if (!adjustmentForm.dataset.bound) {
+    const setAdjustStockPickerOpen = (open) => {
+      if (!adjustStockPickerPopover || !adjustStockPickerButton) return;
+      adjustStockPickerPopover.hidden = !open;
+      adjustStockPickerButton.setAttribute("aria-expanded", String(open));
+      if (open) {
+        const currentData = loadData();
+        renderStockPickerList(adjustStockPickerList, currentData.inventory, adjustItemSelect.value, adjustStockPickerSearch?.value ?? "", {
+          onlyInStock: false,
+          emptyMessage: "No inventory items match your search."
+        });
+        requestAnimationFrame(() => adjustStockPickerSearch?.focus());
+      }
+    };
+
+    adjustStockPickerButton?.addEventListener("click", () => {
+      setAdjustStockPickerOpen(adjustStockPickerPopover?.hidden ?? true);
+    });
+
+    adjustStockPickerSearch?.addEventListener("input", () => {
+      const currentData = loadData();
+      renderStockPickerList(adjustStockPickerList, currentData.inventory, adjustItemSelect.value, adjustStockPickerSearch.value, {
+        onlyInStock: false,
+        emptyMessage: "No inventory items match your search."
+      });
+    });
+
+    adjustStockPickerList?.addEventListener("click", (event) => {
+      const option = event.target.closest("[data-stock-picker-option]");
+      if (!option) return;
+      const currentData = loadData();
+      const selectedItem = currentData.inventory.find((item) => item.id === option.dataset.stockPickerOption);
+      if (!selectedItem) return;
+      adjustItemSelect.value = selectedItem.id;
+      updateStockPickerButton(adjustStockPickerButton, selectedItem, { quantityLabel: "current" });
+      updateConsignmentRestockNotice(adjustConsignmentRestockNotice, selectedItem);
+      renderStockPickerList(adjustStockPickerList, currentData.inventory, selectedItem.id, adjustStockPickerSearch?.value ?? "", {
+        onlyInStock: false,
+        emptyMessage: "No inventory items match your search."
+      });
+      setAdjustStockPickerOpen(false);
+    });
+
+    document.addEventListener("click", (event) => {
+      if (!adjustStockPicker || adjustStockPicker.contains(event.target)) return;
+      setAdjustStockPickerOpen(false);
+    });
+
+    adjustStockPickerSearch?.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        setAdjustStockPickerOpen(false);
+        adjustStockPickerButton?.focus();
+      }
+    });
+
+    adjustItemSelect.addEventListener("change", () => {
+      const currentData = loadData();
+      const selectedItem = currentData.inventory.find((item) => item.id === adjustItemSelect.value);
+      updateStockPickerButton(adjustStockPickerButton, selectedItem, { quantityLabel: "current" });
+      updateConsignmentRestockNotice(adjustConsignmentRestockNotice, selectedItem);
+      renderStockPickerList(adjustStockPickerList, currentData.inventory, adjustItemSelect.value, adjustStockPickerSearch?.value ?? "", {
+        onlyInStock: false,
+        emptyMessage: "No inventory items match your search."
+      });
+    });
+
     addAdjustmentLineButton.addEventListener("click", () => {
       const currentData = loadData();
       const itemId = adjustItemSelect.value;
       const quantity = Number(adjustQuantityInput.value || "0");
-      const stockType = adjustStockTypeSelect.value === "consignment" ? "consignment" : "own";
+      const receivingPurpose = ["own", "consignment"].includes(adjustStockTypeSelect.value)
+        ? adjustStockTypeSelect.value
+        : "own";
       const item = currentData.inventory.find((entry) => entry.id === itemId);
 
       if (!itemId || !item || quantity <= 0) {
@@ -1878,17 +2325,17 @@ function initAddStockPage() {
         return;
       }
 
-      const existingRow = adjustmentLines.querySelector(`[data-item-id="${itemId}"][data-stock-type="${stockType}"]`);
+      const existingRow = adjustmentLines.querySelector(`[data-item-id="${itemId}"][data-receiving-purpose="${receivingPurpose}"]`);
       if (existingRow) {
         const quantityInput = existingRow.querySelector('input[name="adjustmentQuantity"]');
         quantityInput.value = Number(quantityInput.value || "0") + quantity;
       } else {
         adjustmentLines.insertAdjacentHTML("beforeend", `
-          <tr data-adjustment-item-row data-item-id="${item.id}" data-stock-type="${stockType}">
+          <tr data-adjustment-item-row data-item-id="${item.id}" data-receiving-purpose="${receivingPurpose}">
             <td><strong>${escapeHtml(item.name)}</strong><br><span class="muted">${escapeHtml(item.brand ?? "Generic")} / ${escapeHtml(item.model ?? "Standard")}</span></td>
             <td>${escapeHtml(item.sku)}</td>
-            <td data-adjustment-current-stock>${formatStockBreakdown(item)}</td>
-            <td>${stockType === "consignment" ? "Consignment" : "Our stock"}</td>
+            <td data-adjustment-current-stock>${renderStockBreakdownChips(item)}</td>
+            <td data-adjustment-allocation>${renderStockInAllocationChips(item, quantity, receivingPurpose)}</td>
             <td><input class="stock-out-qty-input" name="adjustmentQuantity" type="number" min="1" step="1" value="${quantity}"></td>
             <td>${escapeHtml(item.unit ?? "-")}</td>
             <td><button type="button" class="button-link stock-out-line-remove" data-adjustment-remove>Remove</button></td>
@@ -1914,15 +2361,18 @@ function initAddStockPage() {
       }
     });
 
-    adjustmentForm.addEventListener("submit", (event) => {
+    adjustmentForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const nextData = loadData();
       const currentUser = getCurrentUser();
       const timestamp = new Date().toISOString();
+      const stockInSessionId = crypto.randomUUID();
       const lineItems = Array.from(adjustmentForm.querySelectorAll("[data-adjustment-item-row]"))
         .map((line) => ({
           itemId: line.dataset.itemId ?? "",
-          stockType: line.dataset.stockType === "consignment" ? "consignment" : "own",
+          receivingPurpose: ["own", "consignment"].includes(line.dataset.receivingPurpose)
+            ? line.dataset.receivingPurpose
+            : "own",
           quantity: Number(line.querySelector('input[name="adjustmentQuantity"]')?.value ?? "0")
         }))
         .filter((line) => line.itemId && line.quantity > 0);
@@ -1932,30 +2382,57 @@ function initAddStockPage() {
         return;
       }
 
+      const confirmationLines = lineItems.map((line) => {
+        const item = nextData.inventory.find((record) => record.id === line.itemId);
+        return {
+          ...line,
+          name: item?.name ?? "Unknown item",
+          sku: item?.sku ?? "-",
+          brand: item?.brand ?? "Generic",
+          model: item?.model ?? "Standard"
+        };
+      });
+
+      const confirmed = await showStockInConfirmationDialog(confirmationLines);
+
+      if (!confirmed) return;
+
       lineItems.forEach((line) => {
         const item = nextData.inventory.find((record) => record.id === line.itemId);
         if (!item) return;
+        const allocation = calculateStockInAllocation(item, line.quantity, line.receivingPurpose);
 
-        if (line.stockType === "consignment") {
-          item.consignmentQuantity = Math.max(Number(item.consignmentQuantity ?? 0), 0) + line.quantity;
+        if (allocation.consignmentQuantity > 0) {
+          item.consignmentQuantity = Math.max(Number(item.consignmentQuantity ?? 0), 0) + allocation.consignmentQuantity;
           item.consignmentBaseline = Math.max(Number(item.consignmentBaseline ?? 0), item.consignmentQuantity);
-        } else {
-          item.ownQuantity = Math.max(Number(item.ownQuantity ?? item.quantity ?? 0), 0) + line.quantity;
         }
+        if (allocation.ownQuantity > 0) {
+          item.ownQuantity = Math.max(Number(item.ownQuantity ?? item.quantity ?? 0), 0) + allocation.ownQuantity;
+        }
+
         syncInventoryTotals(item);
         item.lastUpdatedAt = timestamp;
         item.lastUpdatedByUserId = currentUser?.id ?? null;
         item.lastUpdatedByName = getUserDisplayName(currentUser);
-        nextData.adjustments.push({
-          id: crypto.randomUUID(),
-          itemId: item.id,
-          type: "add",
-          stockType: line.stockType,
-          quantity: line.quantity,
-          remarks: "",
-          createdAt: timestamp,
-          actorUserId: currentUser?.id ?? null,
-          actorName: getUserDisplayName(currentUser)
+
+        [
+          { stockType: "consignment", quantity: allocation.consignmentQuantity },
+          { stockType: "own", quantity: allocation.ownQuantity }
+        ].filter((entry) => entry.quantity > 0).forEach((entry) => {
+          nextData.adjustments.push({
+            id: crypto.randomUUID(),
+            itemId: item.id,
+            type: "add",
+            stockInSessionId,
+            stockType: entry.stockType,
+            receivingPurpose: line.receivingPurpose,
+            quantity: entry.quantity,
+            receivedQuantity: line.quantity,
+            remarks: "",
+            createdAt: timestamp,
+            actorUserId: currentUser?.id ?? null,
+            actorName: getUserDisplayName(currentUser)
+          });
         });
       });
 
@@ -1963,7 +2440,7 @@ function initAddStockPage() {
       adjustmentForm.reset();
       adjustmentLines.innerHTML = "";
       refreshAddStockOptions();
-      showNotice(content, `Stocks added successfully by ${getUserDisplayName(currentUser)}.`);
+      showToast(`Stocks added successfully by ${getUserDisplayName(currentUser)}.`);
     });
     adjustmentForm.dataset.bound = "true";
   }
@@ -2079,7 +2556,10 @@ function initDrawStockPage() {
             <td><strong>${escapeHtml(item.name)}</strong><br><span class="muted">${escapeHtml(item.brand ?? "Generic")} / ${escapeHtml(item.model ?? "Standard")}</span></td>
             <td>${escapeHtml(item.sku)}</td>
             <td data-stock-out-available>${renderStockBreakdownChips(item)}</td>
-            <td><input class="stock-out-qty-input" name="issueQuantity" type="number" min="1" step="1" value="${quantity}"></td>
+            <td>
+              <input class="stock-out-qty-input" name="issueQuantity" type="number" min="1" step="1" value="${quantity}">
+              <span class="consignment-use-hint" data-stock-out-consignment-notice${renderConsignmentDrawNotice(item, quantity) ? "" : " hidden"}>${escapeHtml(renderConsignmentDrawNotice(item, quantity))}</span>
+            </td>
             <td>${escapeHtml(item.unit ?? "-")}</td>
             <td><button type="button" class="button-link stock-out-line-remove" data-stock-out-remove>Remove</button></td>
           </tr>
@@ -2185,7 +2665,7 @@ function initDrawStockPage() {
         renderStockOutIssueList(stockOutLines, stockOutEmpty, stockOutSummary, nextData.inventory);
       }
       refreshDrawStockOptions();
-      showNotice(content, `Stock withdrawn by ${getUserDisplayName(currentUser)}. Handover form ${stockOutRecord.documentNo} created.${totalConsignmentIssued ? ` ${totalConsignmentIssued} consignment item(s) must be restocked.` : ""}`);
+      showToast(`Stock withdrawn by ${getUserDisplayName(currentUser)}. Handover form ${stockOutRecord.documentNo} created.${totalConsignmentIssued ? ` ${totalConsignmentIssued} consign item(s) must be restocked.` : ""}`);
       window.open(`handover.html?id=${encodeURIComponent(stockOutRecord.id)}`, "_blank", "noopener");
     });
     stockOutForm.dataset.bound = "true";
@@ -2298,8 +2778,8 @@ function renderActivityDetailPage() {
               <th>Description</th>
               <th>Stock Code</th>
               <th>Quantity</th>
-              <th>Own</th>
-              <th>Consignment</th>
+              <th>LC Stock</th>
+              <th>Consign</th>
               <th>Unit</th>
               <th>Location</th>
               ${record.type === "stock-out" ? "<th>Balance After</th>" : ""}

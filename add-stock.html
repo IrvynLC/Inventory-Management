@@ -31,7 +31,7 @@
         <div>
           <p class="eyebrow">Inventory Workspace</p>
           <h1>Inventory Hub</h1>
-          <p class="brand-meta">Simple daily stock control</p>
+          <p class="brand-meta">Operational stock control</p>
         </div>
       </div>
 
@@ -42,35 +42,35 @@
             <span class="nav-icon">HM</span>
             <span class="nav-copy">
               <span class="nav-title">Home</span>
-              <span class="nav-subtitle">Main actions for daily stock work</span>
+              <span class="nav-subtitle">Access core inventory workflows</span>
             </span>
           </a>
           <a class="nav-link" href="inventory.html">
             <span class="nav-icon">IM</span>
             <span class="nav-copy">
-              <span class="nav-title">View Stocks</span>
-              <span class="nav-subtitle">Open the stock register</span>
+              <span class="nav-title">Inventory</span>
+              <span class="nav-subtitle">Central stock register and availability</span>
             </span>
           </a>
           <a class="nav-link active" href="add-stock.html">
             <span class="nav-icon">IN</span>
             <span class="nav-copy">
               <span class="nav-title">Add Stocks</span>
-              <span class="nav-subtitle">Receive incoming stock</span>
+              <span class="nav-subtitle">Record stock-in transactions</span>
             </span>
           </a>
           <a class="nav-link" href="draw-stock.html">
             <span class="nav-icon">OUT</span>
             <span class="nav-copy">
               <span class="nav-title">Draw Stocks</span>
-              <span class="nav-subtitle">Issue stock for use</span>
+              <span class="nav-subtitle">Process stock-out transactions</span>
             </span>
           </a>
           <a class="nav-link" href="activity-history.html">
             <span class="nav-icon">LOG</span>
             <span class="nav-copy">
               <span class="nav-title">Activity History</span>
-              <span class="nav-subtitle">Audit stock actions and handover forms</span>
+              <span class="nav-subtitle">Review transaction audit records</span>
             </span>
           </a>
         </div>
@@ -80,9 +80,9 @@
     <main class="main-shell">
       <header class="topbar">
         <div class="topbar-copy">
-          <p class="eyebrow">Stock Replenishment</p>
-          <h2>Add Stocks</h2>
-          <p class="hero-copy">Capture incoming inventory quantities accurately and update owned or consignment balances for existing stock items.</p>
+          <p class="eyebrow">Stock-In Control</p>
+          <h2>Stock receiving and balance update</h2>
+          <p class="hero-copy">Record incoming materials with clear allocation to LC Stock or supplier consign stock, ensuring inventory balances remain accurate and traceable.</p>
         </div>
         <div class="topbar-actions">
           <a class="button-link" href="index.html">Back to Home</a>
@@ -93,36 +93,47 @@
       <section class="panel form-panel">
         <div class="panel-header panel-header-tight">
           <div>
-            <p class="eyebrow">Stock In Entry</p>
-            <h3>Update quantities for existing stock items</h3>
-            <p class="section-copy">Use this form to record incoming materials, including consignment stock returned to its original required amount.</p>
+            <p class="eyebrow">Receiving Entry</p>
+            <h3>Register stock-in transactions</h3>
+            <p class="section-copy">Select existing stock records, confirm the receiving category, and submit controlled stock-in updates for audit tracking.</p>
           </div>
         </div>
         <form id="adjustment-form" class="stack-form">
           <div class="panel-header panel-header-tight stock-out-lines-header">
             <div>
-              <p class="eyebrow">Transaction Lines</p>
-              <p class="section-copy">Select each item, enter the quantity received, and add it to the stock-in transaction list below.</p>
+              <p class="eyebrow">Receiving Lines</p>
+              <p class="section-copy">Build the receiving list by item, quantity, and stock category before final confirmation.</p>
             </div>
           </div>
           <div class="stock-out-builder">
             <div class="stock-out-builder-grid">
-              <label>
-                Item
-                <select id="adjust-item" required></select>
-              </label>
+              <div class="stock-picker-field">
+                <label for="adjust-stock-picker-search">Item</label>
+                <select id="adjust-item" class="stock-native-select" required tabindex="-1" aria-hidden="true"></select>
+                <div class="stock-picker" data-adjust-stock-picker>
+                  <button type="button" class="stock-picker-button" id="adjust-stock-picker-button" aria-haspopup="listbox" aria-expanded="false">
+                    <span class="stock-picker-button-title">Select an item</span>
+                    <span class="stock-picker-button-meta">Search by description, SKU, brand, or category</span>
+                  </button>
+                  <div class="stock-picker-popover" id="adjust-stock-picker-popover" hidden>
+                    <input id="adjust-stock-picker-search" class="stock-picker-search" type="search" placeholder="Search item, SKU, brand, or category" autocomplete="off">
+                    <div class="stock-picker-list" id="adjust-stock-picker-list" role="listbox" aria-label="Inventory items"></div>
+                  </div>
+                </div>
+              </div>
               <label>
                 Quantity
                 <input id="adjust-quantity" type="number" min="1" step="1" value="1" required>
               </label>
               <label>
-                Stock type
+                Receiving purpose
                 <select id="adjust-stock-type" required>
-                  <option value="own">Our stock</option>
-                  <option value="consignment">Consignment stock</option>
+                  <option value="own">LC Stock</option>
+                  <option value="consignment">Supplier consign stock</option>
                 </select>
               </label>
               <button type="button" class="button-link stock-out-add-button" id="add-adjustment-line">Add to List</button>
+              <div id="adjust-consignment-restock-notice" class="stock-restock stock-restock-alert add-stock-restock-notice" hidden></div>
             </div>
           </div>
           <div class="stock-out-list">
@@ -133,8 +144,8 @@
                     <th>Item</th>
                     <th>Stock Code</th>
                     <th>Current Stock</th>
-                    <th>Stock Type</th>
-                    <th>Qty to Add</th>
+                    <th>Receiving Purpose</th>
+                    <th>Qty Received</th>
                     <th>Unit</th>
                     <th>Action</th>
                   </tr>
@@ -147,7 +158,7 @@
           </div>
           <div class="form-actions">
             <button type="submit" class="button-secondary">Add Stock</button>
-            <span class="form-hint">Choose consignment stock when replenishing supplier-owned items that were drawn for use.</span>
+            <span class="form-hint">Choose LC Stock for company stock, or Supplier consign stock when replenishing supplier-owned stock.</span>
           </div>
         </form>
       </section>
