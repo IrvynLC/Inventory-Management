@@ -86,7 +86,6 @@
         </div>
         <div class="topbar-actions">
           <a class="button-link" href="index.html">Back to Home</a>
-          <a class="button-link" href="inventory.html">Inventory</a>
           <a class="button-link" href="draw-stock.html">Draw Stocks</a>
         </div>
       </header>
@@ -123,6 +122,15 @@
                 <span class="filter-label">To Date</span>
                 <input id="activity-date-to-filter" type="date">
               </label>
+              <label class="filter-field filter-field-select">
+                <span class="filter-label">Rows</span>
+                <select id="activity-page-size">
+                  <option value="8">8 rows</option>
+                  <option value="20">20 rows</option>
+                  <option value="50">50 rows</option>
+                  <option value="100">100 rows</option>
+                </select>
+              </label>
               <div class="filter-actions">
                 <button class="button-link filter-reset" type="button" id="activity-clear-filters">Clear Filters</button>
               </div>
@@ -138,7 +146,7 @@
                 <th>Date & Time</th>
                 <th>Activity</th>
                 <th>Item</th>
-                <th>Quantity</th>
+                <th>Line Item</th>
                 <th>By Who</th>
                 <th>Details</th>
                 <th>Form</th>
@@ -147,6 +155,7 @@
             <tbody id="activity-history-table-body"></tbody>
           </table>
         </div>
+        <div class="pagination-bar" id="activity-history-pagination"></div>
       </section>
     </main>
   </div>

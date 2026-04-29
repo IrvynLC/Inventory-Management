@@ -80,9 +80,9 @@
     <main class="main-shell">
       <header class="topbar">
         <div class="topbar-copy">
-          <p class="eyebrow">Stock-In Control</p>
-          <h2>Stock receiving and balance update</h2>
-          <p class="hero-copy">Record incoming materials with clear allocation to LC Stock or supplier consign stock, ensuring inventory balances remain accurate and traceable.</p>
+          <p class="eyebrow">Stock Receiving</p>
+          <h2>Add stock to inventory</h2>
+          <p class="hero-copy">Record received items and update the correct balance for LC Stock or consignment stock.</p>
         </div>
         <div class="topbar-actions">
           <a class="button-link" href="index.html">Back to Home</a>
@@ -93,16 +93,16 @@
       <section class="panel form-panel">
         <div class="panel-header panel-header-tight">
           <div>
-            <p class="eyebrow">Receiving Entry</p>
-            <h3>Register stock-in transactions</h3>
-            <p class="section-copy">Select existing stock records, confirm the receiving category, and submit controlled stock-in updates for audit tracking.</p>
+            <p class="eyebrow">Stock-In Entry</p>
+            <h3>Update existing stock records</h3>
+            <p class="section-copy">Select an item, enter the received quantity, and choose where the stock should be added.</p>
           </div>
         </div>
         <form id="adjustment-form" class="stack-form">
           <div class="panel-header panel-header-tight stock-out-lines-header">
             <div>
-              <p class="eyebrow">Receiving Lines</p>
-              <p class="section-copy">Build the receiving list by item, quantity, and stock category before final confirmation.</p>
+              <p class="eyebrow">Stock-In Lines</p>
+              <p class="section-copy">Add each received item to the list before confirming the stock update.</p>
             </div>
           </div>
           <div class="stock-out-builder">
@@ -129,7 +129,7 @@
                 Receiving purpose
                 <select id="adjust-stock-type" required>
                   <option value="own">LC Stock</option>
-                  <option value="consignment">Supplier consign stock</option>
+                  <option value="consignment">Consignment Stock</option>
                 </select>
               </label>
               <button type="button" class="button-link stock-out-add-button" id="add-adjustment-line">Add to List</button>
@@ -158,7 +158,7 @@
           </div>
           <div class="form-actions">
             <button type="submit" class="button-secondary">Add Stock</button>
-            <span class="form-hint">Choose LC Stock for company stock, or Supplier consign stock when replenishing supplier-owned stock.</span>
+            <span class="form-hint">Choose LC Stock for company stock, or Consignment Stock when replenishing supplier-owned stock.</span>
           </div>
         </form>
       </section>
