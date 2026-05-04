@@ -479,7 +479,7 @@ function renderBalanceDelta(before, after) {
   const consignmentDelta = Number(after.consignmentQuantity ?? 0) - Number(before.consignmentQuantity ?? 0);
   const parts = [];
   const formatDelta = (value) => `${value > 0 ? "+" : ""}${value}`;
-  if (ownDelta) parts.push(`LC ${formatDelta(ownDelta)}`);
+  if (ownDelta) parts.push(`LC Stock ${formatDelta(ownDelta)}`);
   if (consignmentDelta) parts.push(`Consignment ${formatDelta(consignmentDelta)}`);
   if (!parts.length && totalDelta) parts.push(`Total ${formatDelta(totalDelta)}`);
   const movementLabel = [ownDelta, consignmentDelta, totalDelta].some((delta) => delta < 0)
@@ -888,6 +888,90 @@ function showStockInConfirmationDialog(lines) {
   });
 }
 
+function showStockOutConfirmationDialog(lines, details) {
+  return new Promise((resolve) => {
+    const lcQuantity = lines
+      .filter((line) => line.issueSource === "own")
+      .reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+    const consignmentQuantity = lines
+      .filter((line) => line.issueSource === "consignment")
+      .reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+    const totalQuantity = lcQuantity + consignmentQuantity;
+    const modal = document.createElement("div");
+    modal.className = "confirm-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-labelledby", "stock-out-confirm-title");
+    modal.innerHTML = `
+      <div class="confirm-modal-backdrop" data-confirm-cancel></div>
+      <div class="confirm-dialog stock-in-confirm-dialog">
+        <div class="confirm-dialog-header">
+          <div>
+            <p class="eyebrow">Review Stock Out</p>
+            <h3 id="stock-out-confirm-title">Confirm stock withdrawal</h3>
+            <p class="section-copy">Check the issue lines and receiver details before updating inventory balances.</p>
+          </div>
+        </div>
+        <div class="confirm-summary-grid" aria-label="Stock out summary">
+          <div class="confirm-summary-card"><strong>${lines.length}</strong><span>Line items</span></div>
+          <div class="confirm-summary-card"><strong>${totalQuantity}</strong><span>Total issue qty</span></div>
+          <div class="confirm-summary-card"><strong>${consignmentQuantity}</strong><span>From consignment</span></div>
+        </div>
+        <section class="confirm-category-section confirm-category-lc">
+          <div class="confirm-category-header">
+            <h4>${escapeHtml(details.projectTitle || "Stock withdrawal")}</h4>
+            <span>Received by ${escapeHtml(details.receivedBy || "-")}</span>
+          </div>
+          <div class="confirm-line-list">
+            ${lines.map((line) => `
+              <div class="confirm-line-item">
+                <div>
+                  <strong>${escapeHtml(line.name)}</strong>
+                  <span>${escapeHtml(line.sku)} | ${escapeHtml(line.brand)} / ${escapeHtml(line.model)}</span>
+                </div>
+                <div class="confirm-line-result">
+                  <span class="inline-stock-chip ${line.issueSource === "consignment" ? "inline-stock-chip-consign" : "inline-stock-chip-own"}">
+                    ${escapeHtml(formatStockPurposeLabel(line.issueSource))} <strong>${escapeHtml(String(line.quantity))}</strong>
+                  </span>
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        </section>
+        <div class="confirm-dialog-actions">
+          <button type="button" class="button-link" data-confirm-cancel>Review Again</button>
+          <button type="button" class="button-primary" data-confirm-submit>Confirm Withdraw Stock</button>
+        </div>
+      </div>
+    `;
+
+    const close = (confirmed) => {
+      document.removeEventListener("keydown", handleKeydown);
+      modal.classList.remove("is-open");
+      setTimeout(() => modal.remove(), 180);
+      document.body.classList.remove("modal-open");
+      resolve(confirmed);
+    };
+
+    document.body.append(modal);
+    document.body.classList.add("modal-open");
+    requestAnimationFrame(() => modal.classList.add("is-open"));
+    modal.querySelector("[data-confirm-submit]")?.focus();
+
+    modal.querySelectorAll("[data-confirm-cancel]").forEach((element) => {
+      element.addEventListener("click", () => close(false));
+    });
+    modal.querySelector("[data-confirm-submit]")?.addEventListener("click", () => close(true));
+
+    function handleKeydown(event) {
+      if (event.key === "Escape") {
+        close(false);
+      }
+    }
+    document.addEventListener("keydown", handleKeydown);
+  });
+}
+
 function showCreateStockConfirmationDialog(item) {
   return new Promise((resolve) => {
     const modal = document.createElement("div");
@@ -1150,7 +1234,7 @@ function getActivityDetailMetricClass(label) {
   if (label === "LC Stock Added") return "metric-card-lc";
   if (label === "Consignment Added") return "metric-card-consignment";
   if (label === "Original Record") return "activity-detail-origin-card";
-  if (label === "Net Adjustment") return "activity-detail-adjustment-card";
+  if (label === "Inventory Adjustment" || label === "Net Adjustment") return "activity-detail-adjustment-card";
   if (label === "Reason") return "activity-detail-reason-card";
   return "";
 }
@@ -1220,7 +1304,7 @@ function getActivityDetailSectionCopy(record) {
   return {
     eyebrow: "Correction Lines",
     title: "Corrected stock movement",
-    copy: "Review the item-level stock balance adjustment created by this correction."
+    copy: "Review the item-level stock balance adjustment and corrected LC or consignment quantity for this transaction."
   };
 }
 
@@ -1243,10 +1327,113 @@ function renderCreateCorrectionChanges(item) {
   `).join("");
 }
 
+function formatMovementRecordQuantity(quantity, sourceKind) {
+  const movementQuantity = Number(quantity ?? 0);
+  if (!movementQuantity) return "0";
+  const signedQuantity = sourceKind === "stock-out" ? -Math.abs(movementQuantity) : Math.abs(movementQuantity);
+  return `${signedQuantity > 0 ? "+" : ""}${signedQuantity}`;
+}
+
+function formatSignedQuantity(quantity) {
+  const signedQuantity = Number(quantity ?? 0);
+  return `${signedQuantity > 0 ? "+" : ""}${signedQuantity}`;
+}
+
+function formatAdjustmentBreakdownSummary(rows) {
+  const ownDelta = (rows ?? []).reduce((sum, row) => sum + Number(row.ownDelta ?? 0), 0);
+  const consignmentDelta = (rows ?? []).reduce((sum, row) => sum + Number(row.consignmentDelta ?? 0), 0);
+  const totalDelta = ownDelta + consignmentDelta;
+  const parts = [];
+  if (ownDelta) parts.push(`LC Stock ${formatSignedQuantity(ownDelta)}`);
+  if (consignmentDelta) parts.push(`Consignment ${formatSignedQuantity(consignmentDelta)}`);
+  if (!parts.length) parts.push(formatSignedQuantity(totalDelta));
+  return parts.join(" | ");
+}
+
+function renderMovementChangeValue(item, prefix, sourceKind, visibleSources) {
+  const rows = [
+    visibleSources.includes("own")
+      ? `<span><strong>LC Stock</strong> ${escapeHtml(formatMovementRecordQuantity(item[`${prefix}OwnMovementQuantity`], sourceKind))}</span>`
+      : "",
+    visibleSources.includes("consignment")
+      ? `<span><strong>Consignment</strong> ${escapeHtml(formatMovementRecordQuantity(item[`${prefix}ConsignmentMovementQuantity`], sourceKind))}</span>`
+      : ""
+  ].filter(Boolean).join("");
+
+  return `<div class="activity-detail-movement-compact">${rows || `<span>${escapeHtml(formatMovementRecordQuantity(0, sourceKind))}</span>`}</div>`;
+}
+
+function renderCorrectionAdjustmentValue(ownQuantity, consignmentQuantity, showOwnMovementColumn, showConsignmentMovementColumn) {
+  const rows = [
+    showOwnMovementColumn
+      ? `<div><strong>LC Stock</strong> ${renderActivityDetailQuantityValue(ownQuantity, "correction")}</div>`
+      : "",
+    showConsignmentMovementColumn
+      ? `<div><strong>Consignment</strong> ${renderActivityDetailQuantityValue(consignmentQuantity, "correction")}</div>`
+      : ""
+  ].filter(Boolean).join("");
+
+  return `<div class="activity-detail-adjustment-compact">${rows}</div>`;
+}
+
+function renderMovementCorrectionTable(record, movementSourceKind, showOwnMovementColumn, showConsignmentMovementColumn) {
+  return `
+    <table class="activity-detail-correction-table">
+      <thead>
+        <tr>
+          <th>Brand</th>
+          <th>Model</th>
+          <th>Description</th>
+          <th>Stock Code</th>
+          <th>Adjustment</th>
+          <th>Previously Recorded</th>
+          <th>Corrected Record</th>
+          <th>Unit</th>
+          <th>Location</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${record.itemRows.map((item) => {
+          const ownDisplayQuantity = item.ownDelta ?? item.ownQuantity ?? 0;
+          const consignmentDisplayQuantity = item.consignmentDelta ?? item.consignmentQuantity ?? 0;
+          const visibleBreakdownSources = [
+            Number(item.previousOwnMovementQuantity ?? 0) || Number(item.correctedOwnMovementQuantity ?? 0) ? "own" : "",
+            Number(item.previousConsignmentMovementQuantity ?? 0) || Number(item.correctedConsignmentMovementQuantity ?? 0) ? "consignment" : ""
+          ].filter(Boolean);
+
+          return `
+            <tr>
+              <td>${escapeHtml(item.brand)}</td>
+              <td>${escapeHtml(item.model)}</td>
+              <td><strong class="activity-detail-description-compact">${escapeHtml(item.name)}</strong></td>
+              <td>${escapeHtml(item.sku)}</td>
+              <td>${renderCorrectionAdjustmentValue(ownDisplayQuantity, consignmentDisplayQuantity, showOwnMovementColumn, showConsignmentMovementColumn)}</td>
+              <td>${renderMovementChangeValue(item, "previous", movementSourceKind, visibleBreakdownSources)}</td>
+              <td>${renderMovementChangeValue(item, "corrected", movementSourceKind, visibleBreakdownSources)}</td>
+              <td>${escapeHtml(item.unit)}</td>
+              <td>${escapeHtml(item.location)}</td>
+            </tr>
+          `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
 function renderActivityDetailItemsSection(record) {
   const sectionCopy = getActivityDetailSectionCopy(record);
   const isCreateRecord = record.type === "create";
   const isCreateCorrection = record.type === "correction" && getCorrectableRecordKind(record) === "create";
+  const isMovementCorrection = record.type === "correction" && !isCreateCorrection;
+  const movementSourceKind = isMovementCorrection ? getCorrectableRecordKind(record) : record.type;
+  const hasOwnMovement = !isCreateRecord && !isCreateCorrection
+    ? record.itemRows.some((item) => Number(isMovementCorrection ? item.ownDelta ?? item.ownQuantity ?? 0 : item.ownQuantity ?? 0) !== 0)
+    : true;
+  const hasConsignmentMovement = !isCreateRecord && !isCreateCorrection
+    ? record.itemRows.some((item) => Number(isMovementCorrection ? item.consignmentDelta ?? item.consignmentQuantity ?? 0 : item.consignmentQuantity ?? 0) !== 0)
+    : true;
+  const showOwnMovementColumn = hasOwnMovement || !hasConsignmentMovement;
+  const showConsignmentMovementColumn = hasConsignmentMovement;
   const tableMarkup = isCreateCorrection
     ? `
       <table class="activity-detail-change-table">
@@ -1289,35 +1476,41 @@ function renderActivityDetailItemsSection(record) {
           </tbody>
         </table>
       `
-      : `
-        <table>
+      : isMovementCorrection
+        ? renderMovementCorrectionTable(record, movementSourceKind, showOwnMovementColumn, showConsignmentMovementColumn)
+        : `
+        <table${isMovementCorrection ? ' class="activity-detail-movement-correction-table"' : ""}>
           <thead>
             <tr>
               <th>Brand</th>
               <th>Model</th>
               <th>Description</th>
               <th>Stock Code</th>
-              <th>LC Stock</th>
-              <th>Consignment</th>
+              ${showOwnMovementColumn ? `<th>${isMovementCorrection ? "LC Adjustment" : "LC Stock"}</th>` : ""}
+              ${showConsignmentMovementColumn ? `<th>${isMovementCorrection ? "Consignment Adjustment" : "Consignment"}</th>` : ""}
               <th>Unit</th>
               <th>Location</th>
               ${record.type === "stock-out" ? "<th>Balance After</th>" : ""}
             </tr>
           </thead>
           <tbody>
-            ${record.itemRows.map((item) => `
-              <tr>
-                <td>${escapeHtml(item.brand)}</td>
-                <td>${escapeHtml(item.model)}</td>
-                <td><strong>${escapeHtml(item.name)}</strong></td>
-                <td>${escapeHtml(item.sku)}</td>
-                <td class="activity-detail-quantity-cell"><span class="${getActivityQuantityClass(record.type)}">${escapeHtml(formatActivityDetailQuantity(item.ownQuantity ?? 0, record.type))}</span></td>
-                <td class="activity-detail-quantity-cell"><span class="${getActivityQuantityClass(record.type)}">${escapeHtml(formatActivityDetailQuantity(item.consignmentQuantity ?? 0, record.type))}</span>${item.consignmentToRestock ? `<br><span class="muted">${escapeHtml(String(item.consignmentToRestock))} to restock</span>` : ""}</td>
-                <td>${escapeHtml(item.unit)}</td>
-                <td>${escapeHtml(item.location)}</td>
-                ${record.type === "stock-out" ? `<td class="activity-detail-balance-after">${escapeHtml(String(item.balanceAfter ?? 0))}</td>` : ""}
-              </tr>
-            `).join("")}
+            ${record.itemRows.map((item) => {
+              const ownDisplayQuantity = item.ownQuantity ?? 0;
+              const consignmentDisplayQuantity = item.consignmentQuantity ?? 0;
+              return `
+                <tr>
+                  <td>${escapeHtml(item.brand)}</td>
+                  <td>${escapeHtml(item.model)}</td>
+                  <td><strong>${escapeHtml(item.name)}</strong></td>
+                  <td>${escapeHtml(item.sku)}</td>
+                  ${showOwnMovementColumn ? `<td class="activity-detail-quantity-cell">${renderActivityDetailQuantityValue(ownDisplayQuantity, record.type)}</td>` : ""}
+                  ${showConsignmentMovementColumn ? `<td class="activity-detail-quantity-cell">${renderActivityDetailQuantityValue(consignmentDisplayQuantity, record.type)}${record.type !== "stock-out" && item.consignmentToRestock ? `<br><span class="muted">${escapeHtml(String(item.consignmentToRestock))} to restock</span>` : ""}</td>` : ""}
+                  <td>${escapeHtml(item.unit)}</td>
+                  <td>${escapeHtml(item.location)}</td>
+                  ${record.type === "stock-out" ? `<td class="activity-detail-balance-after">${escapeHtml(String(item.balanceAfter ?? 0))}</td>` : ""}
+                </tr>
+              `;
+            }).join("")}
           </tbody>
         </table>
       `;
@@ -1420,10 +1613,20 @@ function formatActivityDetailQuantity(value, type) {
   return String(quantity);
 }
 
-function getActivityQuantityClass(type) {
+function renderActivityDetailQuantityValue(value, type) {
+  const quantity = Number(value ?? 0);
+  if (!quantity) return `<span class="muted">-</span>`;
+  return `<span class="${getActivityQuantityClass(type, quantity)}">${escapeHtml(formatActivityDetailQuantity(quantity, type))}</span>`;
+}
+
+function getActivityQuantityClass(type, quantity = 0) {
   if (type === "stock-in") return "activity-quantity-positive";
   if (type === "stock-out") return "activity-quantity-negative";
-  if (type === "correction") return "activity-quantity-correction";
+  if (type === "correction") {
+    if (Number(quantity) > 0) return "activity-quantity-positive";
+    if (Number(quantity) < 0) return "activity-quantity-negative";
+    return "activity-quantity-correction";
+  }
   return "";
 }
 
@@ -2267,9 +2470,9 @@ function getActivityEvents(data) {
 
   const corrections = (data.corrections ?? []).map((entry) => {
     const itemLines = (entry.itemRows ?? []).map((row) => row.name ?? row.sku ?? "Item");
-    const totalDelta = (entry.itemRows ?? []).reduce((sum, row) => sum + Number(row.quantityDelta || 0), 0);
     const sourceKind = getCorrectionSourceKind(entry) ?? entry.sourceType;
     const isCreateCorrection = sourceKind === "create";
+    const adjustmentSummary = formatAdjustmentBreakdownSummary(entry.itemRows);
     return {
       id: `correction-${entry.id}`,
       type: "correction",
@@ -2280,9 +2483,9 @@ function getActivityEvents(data) {
       itemLines,
       detail: isCreateCorrection
         ? `Item information corrected | ${entry.reason ?? "No reason provided"}`
-        : `${totalDelta >= 0 ? "Net adjustment +" : "Net adjustment "}${totalDelta} | ${entry.reason ?? "No reason provided"}`,
+        : `Inventory adjustment ${adjustmentSummary} | ${entry.reason ?? "No reason provided"}`,
       detailRows: [
-        ...(isCreateCorrection ? [{ label: "Change Type", value: "Item information" }] : [{ label: "Net adjustment", value: `${totalDelta >= 0 ? "+" : ""}${totalDelta}` }]),
+        ...(isCreateCorrection ? [{ label: "Change Type", value: "Item information" }] : [{ label: "Inventory adjustment", value: adjustmentSummary }]),
         { label: "Reason", value: entry.reason ?? "No reason provided" }
       ],
       quantityText: formatLineItemCount(itemLines.length),
@@ -2361,8 +2564,7 @@ function getCorrectionChangeSummary(correction) {
     const changedCount = (correction.itemRows ?? []).reduce((sum, row) => sum + (row.changedFields?.length ?? 0), 0);
     return `${changedCount || "Item"} information field${changedCount === 1 ? "" : "s"} corrected`;
   }
-  const totalDelta = (correction.itemRows ?? []).reduce((sum, row) => sum + Number(row.quantityDelta || 0), 0);
-  return `Net stock adjustment ${totalDelta >= 0 ? "+" : ""}${totalDelta}`;
+  return `Inventory adjusted ${formatAdjustmentBreakdownSummary(correction.itemRows)}`;
 }
 
 function getOriginalAuditRecord(data, sourceType, sourceId) {
@@ -2441,18 +2643,19 @@ function getActivityDetailRecord(type, id, data) {
     const consignQuantity = adjustments
       .filter((adjustment) => adjustment.stockType === "consignment")
       .reduce((sum, adjustment) => sum + Number(adjustment.quantity || 0), 0);
+    const detailRows = [
+      { label: "Total Quantity Added", value: `+${totalQuantity}` },
+      ...(lcQuantity ? [{ label: "LC Stock Added", value: `+${lcQuantity}` }] : []),
+      ...(consignQuantity ? [{ label: "Consignment Added", value: `+${consignQuantity}` }] : []),
+      { label: "Remarks", value: firstAdjustment.remarks || "No remarks provided" }
+    ];
     return {
       type,
       title: "Stock-In Record",
       actor: firstAdjustment.actorName ?? "Unknown User",
       createdAt: firstAdjustment.createdAt,
       summary: `${adjustments.length} stock-in line${adjustments.length === 1 ? "" : "s"}`,
-      detailRows: [
-        { label: "Total Quantity Added", value: `+${totalQuantity}` },
-        { label: "LC Stock Added", value: `+${lcQuantity}` },
-        { label: "Consignment Added", value: `+${consignQuantity}` },
-        { label: "Remarks", value: firstAdjustment.remarks || "No remarks provided" }
-      ],
+      detailRows,
       itemRows: adjustments.map((adjustment) => {
         const item = data.inventory.find((entry) => entry.id === adjustment.itemId);
         return {
@@ -2521,6 +2724,7 @@ function getActivityDetailRecord(type, id, data) {
         balanceAfter
       };
     });
+    const consignmentIssued = items.reduce((sum, line) => sum + Number(line.consignmentQuantity || 0), 0);
     return {
       type,
       title: "Stock-Out Record",
@@ -2531,7 +2735,7 @@ function getActivityDetailRecord(type, id, data) {
         { label: "Document No", value: stockOut.documentNo ?? "-" },
         { label: "Project Title", value: stockOut.projectTitle ?? "-" },
         { label: "Received By", value: stockOut.receivedBy ?? "-" },
-        { label: "Consignment Issued", value: items.reduce((sum, line) => sum + Number(line.consignmentQuantity || 0), 0) }
+        ...(consignmentIssued ? [{ label: "Consignment Issued", value: consignmentIssued }] : [])
       ],
       itemRows: items.map((line) => ({
         brand: line.itemSnapshot?.brand ?? "-",
@@ -2558,7 +2762,6 @@ function getActivityDetailRecord(type, id, data) {
   if (type === "correction") {
     const correction = (data.corrections ?? []).find((entry) => entry.id === id);
     if (!correction) return null;
-    const totalDelta = (correction.itemRows ?? []).reduce((sum, row) => sum + Number(row.quantityDelta || 0), 0);
     const latestCorrection = getLatestCorrection(data, "correction", id);
     const rootSource = getRootCorrectionSource(data, correction);
     const sourceKind = getCorrectionSourceKind(correction) ?? rootSource.type ?? correction.sourceType;
@@ -2566,6 +2769,24 @@ function getActivityDetailRecord(type, id, data) {
     const originalRecord = correction.sourceType && correction.sourceId
       ? getActivityDetailRecord(correction.sourceType, correction.sourceId, data)
       : null;
+    const getCorrectedMovementBreakdown = (row) => ({
+      ownQuantity: Number(row.correctedValues?.ownQuantity ?? row.ownQuantity ?? 0),
+      consignmentQuantity: Number(row.correctedValues?.consignmentQuantity ?? row.consignmentQuantity ?? 0)
+    });
+    const getPreviousMovementBreakdown = (row) => {
+      const correctedBreakdown = getCorrectedMovementBreakdown(row);
+      const ownDelta = Number(row.ownDelta ?? 0);
+      const consignmentDelta = Number(row.consignmentDelta ?? 0);
+      return sourceKind === "stock-out"
+        ? {
+            ownQuantity: correctedBreakdown.ownQuantity + ownDelta,
+            consignmentQuantity: correctedBreakdown.consignmentQuantity + consignmentDelta
+          }
+        : {
+            ownQuantity: correctedBreakdown.ownQuantity - ownDelta,
+            consignmentQuantity: correctedBreakdown.consignmentQuantity - consignmentDelta
+          };
+    };
     return {
       type,
       sourceType: correction.sourceType,
@@ -2590,10 +2811,13 @@ function getActivityDetailRecord(type, id, data) {
         },
         isCreateCorrection
           ? { label: "Change Type", value: "Item information" }
-          : { label: "Net Adjustment", value: `${totalDelta >= 0 ? "+" : ""}${totalDelta}` },
+          : { label: "Inventory Adjustment", value: formatAdjustmentBreakdownSummary(correction.itemRows) },
         { label: "Reason", value: correction.reason ?? "No reason provided" }
-      ],
-      itemRows: (correction.itemRows ?? []).map((row) => ({
+      ].filter(Boolean),
+      itemRows: (correction.itemRows ?? []).map((row) => {
+        const previousBreakdown = getPreviousMovementBreakdown(row);
+        const correctedBreakdown = getCorrectedMovementBreakdown(row);
+        return {
         brand: row.brand ?? "-",
         model: row.model ?? "-",
         name: row.name ?? "-",
@@ -2603,6 +2827,13 @@ function getActivityDetailRecord(type, id, data) {
         stockType: row.correctedValues?.stockType ?? row.stockType ?? "own",
         ownQuantity: row.correctedValues?.ownQuantity ?? row.ownQuantity ?? row.ownDelta ?? 0,
         consignmentQuantity: row.correctedValues?.consignmentQuantity ?? row.consignmentQuantity ?? row.consignmentDelta ?? 0,
+        quantityDelta: row.quantityDelta ?? 0,
+        ownDelta: row.ownDelta ?? 0,
+        consignmentDelta: row.consignmentDelta ?? 0,
+        previousOwnMovementQuantity: previousBreakdown.ownQuantity,
+        previousConsignmentMovementQuantity: previousBreakdown.consignmentQuantity,
+        correctedOwnMovementQuantity: correctedBreakdown.ownQuantity,
+        correctedConsignmentMovementQuantity: correctedBreakdown.consignmentQuantity,
         consignmentToRestock: row.balanceAfter?.consignmentToRestock ?? 0,
         unit: row.unit ?? "-",
         location: row.location ?? "-",
@@ -2610,7 +2841,8 @@ function getActivityDetailRecord(type, id, data) {
         previousValues: row.previousValues ?? null,
         correctedValues: row.correctedValues ?? null,
         changedFields: row.changedFields ?? []
-      })),
+      };
+      }),
       balanceRows: isCreateCorrection ? [] : (correction.itemRows ?? []).map((row) => ({
         name: row.name ?? "Deleted item",
         sku: row.sku ?? "-",
@@ -3000,10 +3232,11 @@ function syncCustomSelect(select) {
     list.innerHTML = Array.from(select.options).map((option) => `
       <button
         type="button"
-        class="custom-select-option${option.selected ? " is-selected" : ""}"
+        class="custom-select-option${option.selected ? " is-selected" : ""}${option.disabled ? " is-disabled" : ""}"
         data-custom-select-option="${escapeHtml(option.value)}"
         role="option"
         aria-selected="${option.selected ? "true" : "false"}"
+        ${option.disabled ? "disabled" : ""}
       >${escapeHtml(option.textContent)}</button>
     `).join("");
   }
@@ -3020,7 +3253,7 @@ function closeCustomSelects(except = null) {
 }
 
 function enhanceFilterSelects(scope = document) {
-  scope.querySelectorAll(".filter-field-select select").forEach((select) => {
+  scope.querySelectorAll(".filter-field-select select, .custom-select-field select").forEach((select) => {
     if (!select.dataset.customSelectBound) {
       const customSelect = document.createElement("div");
       customSelect.className = "custom-select";
@@ -3045,7 +3278,7 @@ function enhanceFilterSelects(scope = document) {
 
       list?.addEventListener("click", (event) => {
         const option = event.target.closest("[data-custom-select-option]");
-        if (!option) return;
+        if (!option || option.disabled) return;
         select.value = option.dataset.customSelectOption;
         select.dispatchEvent(new Event("change", { bubbles: true }));
         syncCustomSelect(select);
@@ -3943,6 +4176,8 @@ function initDrawStockPage() {
     } else {
       stockOutSourceSelect.value = "own";
     }
+
+    syncCustomSelect(stockOutSourceSelect);
   };
 
   const refreshDrawStockOptions = () => {
@@ -3964,6 +4199,7 @@ function initDrawStockPage() {
   };
 
   refreshDrawStockOptions();
+  enhanceFilterSelects(content);
 
   const addStockOutLine = () => {
     const currentData = loadData();
@@ -4097,7 +4333,7 @@ function initDrawStockPage() {
       }
     });
 
-    stockOutForm.addEventListener("submit", (event) => {
+    stockOutForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = new FormData(stockOutForm);
       const nextData = loadData();
@@ -4137,6 +4373,22 @@ function initDrawStockPage() {
           return;
         }
       }
+
+      const confirmationLines = lineItems.map((line) => {
+        const item = nextData.inventory.find((record) => record.id === line.itemId);
+        return {
+          ...line,
+          name: item?.name ?? "Inventory item",
+          sku: item?.sku ?? "-",
+          brand: item?.brand ?? "Generic",
+          model: item?.model ?? "Standard"
+        };
+      });
+      const confirmed = await showStockOutConfirmationDialog(confirmationLines, {
+        projectTitle: form.get("projectTitle").trim(),
+        receivedBy: form.get("receivedBy").trim()
+      });
+      if (!confirmed) return;
 
       const issuedItems = lineItems.map((line) => {
         const item = nextData.inventory.find((record) => record.id === line.itemId);
