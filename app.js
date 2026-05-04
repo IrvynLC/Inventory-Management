@@ -495,32 +495,41 @@ function renderInventoryBalanceCell(item) {
   const own = Number(item.ownQuantity ?? item.quantity ?? 0);
   const consignment = Number(item.consignmentQuantity ?? 0);
   const hasConsign = consignment > 0 || Number(item.consignmentBaseline ?? 0) > 0;
+  const splitMarkup = hasConsign
+    ? `
+      <div class="stock-split" aria-label="Stock ownership split">
+        <span class="stock-chip stock-chip-own">LC Stock <strong>${own}</strong></span>
+        <span class="stock-chip stock-chip-consign">Consignment <strong>${consignment}</strong></span>
+      </div>
+    `
+    : "";
+
   return `
-    <div class="stock-balance-cell">
+    <div class="stock-balance-cell${hasConsign ? "" : " stock-balance-cell-single"}">
       <div class="stock-total">
         <strong>${total}</strong>
         <span>${escapeHtml(item.unit ?? "units")} total</span>
       </div>
-      <div class="stock-split" aria-label="Stock ownership split">
-        <span class="stock-chip stock-chip-own">LC Stock <strong>${own}</strong></span>
-        ${hasConsign ? `<span class="stock-chip stock-chip-consign">Consignment <strong>${consignment}</strong></span>` : ""}
-      </div>
+      ${splitMarkup}
     </div>
   `;
 }
 
 function renderConsignmentRestockCell(item) {
-  const restock = getConsignmentUsed(item);
   return `
     <div class="location-stack">
       <span>${escapeHtml(item.location ?? "Main Store")}</span>
-      ${restock ? `<span class="stock-restock stock-restock-alert">Need restock: ${escapeHtml(String(restock))}</span>` : ""}
     </div>
   `;
 }
 
 function getReceivingPurposeLabel(purpose) {
   if (purpose === "consignment") return "Consignment Stock";
+  return "LC Stock";
+}
+
+function formatStockPurposeLabel(purpose) {
+  if (purpose === "consignment") return "Consignment";
   return "LC Stock";
 }
 
@@ -768,6 +777,22 @@ function showToast(message, variant = "success") {
   }, 3600);
 }
 
+function queueToast(message, variant = "success") {
+  sessionStorage.setItem("ims-flash-toast", JSON.stringify({ message, variant }));
+}
+
+function showQueuedToast() {
+  const rawToast = sessionStorage.getItem("ims-flash-toast");
+  if (!rawToast) return;
+  sessionStorage.removeItem("ims-flash-toast");
+  try {
+    const toast = JSON.parse(rawToast);
+    if (toast?.message) showToast(toast.message, toast.variant ?? "success");
+  } catch (error) {
+    showToast(rawToast);
+  }
+}
+
 function showStockInConfirmationDialog(lines) {
   return new Promise((resolve) => {
     const totalQuantity = lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
@@ -863,6 +888,245 @@ function showStockInConfirmationDialog(lines) {
   });
 }
 
+function showCreateStockConfirmationDialog(item) {
+  return new Promise((resolve) => {
+    const modal = document.createElement("div");
+    modal.className = "confirm-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-labelledby", "create-stock-confirm-title");
+    modal.innerHTML = `
+      <div class="confirm-modal-backdrop" data-confirm-cancel></div>
+      <div class="confirm-dialog create-stock-confirm-dialog">
+        <div class="confirm-dialog-header">
+          <div>
+            <p class="eyebrow">Review New Stock</p>
+            <h3 id="create-stock-confirm-title">Confirm new inventory item</h3>
+            <p class="section-copy">Check the master item details before creating the stock record.</p>
+          </div>
+        </div>
+        <section class="create-review-card" aria-label="New item details">
+          <div class="create-review-header">
+            <div>
+              <span class="create-review-kicker">Item description</span>
+              <h4>${escapeHtml(item.name)}</h4>
+            </div>
+            <span class="create-review-location">${escapeHtml(item.location)}</span>
+          </div>
+          <div class="create-review-grid">
+            <div class="create-review-field">
+              <span>Stock code</span>
+              <strong>${escapeHtml(item.sku)}</strong>
+            </div>
+            <div class="create-review-field">
+              <span>Unit</span>
+              <strong>${escapeHtml(item.unit)}</strong>
+            </div>
+            <div class="create-review-field">
+              <span>Brand</span>
+              <strong>${escapeHtml(item.brand)}</strong>
+            </div>
+            <div class="create-review-field">
+              <span>Model</span>
+              <strong>${escapeHtml(item.model)}</strong>
+            </div>
+          </div>
+        </section>
+        <div class="confirm-dialog-actions">
+          <button type="button" class="button-link" data-confirm-cancel>Review Again</button>
+          <button type="button" class="button-primary" data-confirm-submit>Confirm Save Item</button>
+        </div>
+      </div>
+    `;
+
+    const close = (confirmed) => {
+      document.removeEventListener("keydown", handleKeydown);
+      modal.classList.remove("is-open");
+      setTimeout(() => modal.remove(), 180);
+      document.body.classList.remove("modal-open");
+      resolve(confirmed);
+    };
+
+    document.body.append(modal);
+    document.body.classList.add("modal-open");
+    requestAnimationFrame(() => modal.classList.add("is-open"));
+    modal.querySelector("[data-confirm-submit]")?.focus();
+
+    modal.querySelectorAll("[data-confirm-cancel]").forEach((element) => {
+      element.addEventListener("click", () => close(false));
+    });
+    modal.querySelector("[data-confirm-submit]")?.addEventListener("click", () => close(true));
+
+    function handleKeydown(event) {
+      if (event.key === "Escape") {
+        close(false);
+      }
+    }
+    document.addEventListener("keydown", handleKeydown);
+  });
+}
+
+function renderCorrectionPreviewItem({ label, beforeValue, afterValue, changed, meta = "" }) {
+  return `
+    <div class="correction-preview-item${changed ? " is-changed" : ""}">
+      <div class="correction-preview-label">
+        <span>${escapeHtml(label)}</span>
+        ${meta ? `<small>${escapeHtml(meta)}</small>` : ""}
+      </div>
+      <div class="correction-preview-values">
+        <div class="correction-preview-value">
+          <span>Before</span>
+          <strong>${escapeHtml(beforeValue || "-")}</strong>
+        </div>
+        <div class="correction-preview-arrow" aria-hidden="true">→</div>
+        <div class="correction-preview-value correction-preview-after">
+          <span>After</span>
+          <strong>${escapeHtml(afterValue || "-")}</strong>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function getCorrectableRecordKind(record) {
+  return record?.type === "correction" ? record.rootSourceType : record?.type;
+}
+
+function getCorrectionPreviewItems(record, form) {
+  const correctionKind = getCorrectableRecordKind(record);
+  if (correctionKind === "create") {
+    const labels = [
+      ["brand", "Brand", "correctBrand-0"],
+      ["model", "Model", "correctModel-0"],
+      ["name", "Description", "correctName-0"],
+      ["sku", "Stock Code", "correctSku-0"],
+      ["unit", "Unit", "correctUnit-0"],
+      ["location", "Location", "correctLocation-0"]
+    ];
+    const item = record.itemRows[0] ?? {};
+    return labels.map(([key, label, inputName]) => {
+      const beforeValue = String(item[key] ?? "-");
+      const afterValue = String(form.elements[inputName]?.value ?? "").trim().replace(/\s+/g, " ");
+      return { label, beforeValue, afterValue: afterValue || "-", changed: beforeValue !== afterValue };
+    });
+  }
+
+  const isStockIn = correctionKind === "stock-in";
+  return record.itemRows.map((item, index) => {
+    const beforeValue = isStockIn
+      ? `${Number(item.quantity ?? 0)} ${item.stockType === "consignment" ? "Consignment" : "LC Stock"}`
+      : `${Number(item.ownQuantity ?? 0)} LC / ${Number(item.consignmentQuantity ?? 0)} Consignment`;
+    const afterValue = isStockIn
+      ? `${Math.max(Number(form.elements[`correctQuantity-${index}`]?.value ?? 0), 0)} ${form.elements[`correctStockType-${index}`]?.value === "consignment" ? "Consignment" : "LC Stock"}`
+      : `${Math.max(Number(form.elements[`correctOwn-${index}`]?.value ?? 0), 0)} LC / ${Math.max(Number(form.elements[`correctConsignment-${index}`]?.value ?? 0), 0)} Consignment`;
+    return {
+      label: item.name ?? item.sku ?? `Line ${index + 1}`,
+      meta: item.sku ?? "",
+      beforeValue,
+      afterValue,
+      changed: beforeValue !== afterValue
+    };
+  });
+}
+
+function buildCorrectionPreviewMarkup(record, form) {
+  const previewItems = getCorrectionPreviewItems(record, form);
+  const changedItems = previewItems.filter((item) => item.changed);
+  const unchangedItems = previewItems.filter((item) => !item.changed);
+  const visibleItems = changedItems.length ? changedItems : previewItems;
+  return `
+    <div class="correction-preview-summary">
+      <strong>${changedItems.length}</strong>
+      <span>changed ${getCorrectableRecordKind(record) === "create" ? "field" : "line"}${changedItems.length === 1 ? "" : "s"}</span>
+    </div>
+    <div class="correction-preview-list">
+      ${visibleItems.map((item) => renderCorrectionPreviewItem(item)).join("")}
+    </div>
+    ${unchangedItems.length && changedItems.length ? `
+      <details class="correction-preview-unchanged">
+        <summary>Show ${unchangedItems.length} unchanged ${getCorrectableRecordKind(record) === "create" ? "field" : "line"}${unchangedItems.length === 1 ? "" : "s"}</summary>
+        <div class="correction-preview-list">
+          ${unchangedItems.map((item) => renderCorrectionPreviewItem(item)).join("")}
+        </div>
+      </details>
+    ` : ""}
+  `;
+}
+
+function showCorrectionConfirmationDialog(record, form) {
+  return new Promise((resolve) => {
+    const modal = document.createElement("div");
+    modal.className = "confirm-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-labelledby", "correction-confirm-title");
+    const correctionKind = getCorrectableRecordKind(record);
+    const isCreate = correctionKind === "create";
+    const recordLabel = isCreate ? "stock creation" : correctionKind === "stock-in" ? "stock-in" : "stock-out";
+    modal.innerHTML = `
+      <div class="confirm-modal-backdrop" data-confirm-cancel></div>
+      <div class="confirm-dialog create-stock-confirm-dialog">
+        <div class="confirm-dialog-header">
+          <div>
+            <p class="eyebrow">Confirm Correction</p>
+            <h3 id="correction-confirm-title">Save ${escapeHtml(recordLabel)} correction?</h3>
+            <p class="section-copy">This will update ${isCreate ? "the master item information" : "inventory balances"} and create a permanent audit record.</p>
+          </div>
+        </div>
+        <section class="create-review-card" aria-label="Correction summary">
+          <div class="create-review-header">
+            <div>
+              <span class="create-review-kicker">Original record</span>
+              <h4>${escapeHtml(record.title)}</h4>
+            </div>
+            <span class="create-review-location">${escapeHtml(record.itemRows.length)} line${record.itemRows.length === 1 ? "" : "s"}</span>
+          </div>
+          <div class="create-review-grid">
+            <div class="create-review-field">
+              <span>Recorded by</span>
+              <strong>${escapeHtml(record.actor)}</strong>
+            </div>
+            <div class="create-review-field">
+              <span>Correction type</span>
+              <strong>${isCreate ? "Item information" : "Stock balance"}</strong>
+            </div>
+          </div>
+          ${buildCorrectionPreviewMarkup(record, form)}
+        </section>
+        <div class="confirm-dialog-actions">
+          <button type="button" class="button-link" data-confirm-cancel>Review Again</button>
+          <button type="button" class="button-primary" data-confirm-submit>Confirm Correction</button>
+        </div>
+      </div>
+    `;
+
+    const close = (confirmed) => {
+      document.removeEventListener("keydown", handleKeydown);
+      modal.classList.remove("is-open");
+      setTimeout(() => modal.remove(), 180);
+      document.body.classList.remove("modal-open");
+      resolve(confirmed);
+    };
+
+    document.body.append(modal);
+    document.body.classList.add("modal-open");
+    requestAnimationFrame(() => modal.classList.add("is-open"));
+    modal.querySelector("[data-confirm-submit]")?.focus();
+
+    modal.querySelectorAll("[data-confirm-cancel]").forEach((element) => {
+      element.addEventListener("click", () => close(false));
+    });
+    modal.querySelector("[data-confirm-submit]")?.addEventListener("click", () => close(true));
+
+    function handleKeydown(event) {
+      if (event.key === "Escape") {
+        close(false);
+      }
+    }
+    document.addEventListener("keydown", handleKeydown);
+  });
+}
+
 function formatDateTime(value) {
   return new Date(value).toLocaleString();
 }
@@ -885,7 +1149,267 @@ function getActivityDetailMetricClass(label) {
   if (label === "Total Quantity Added") return "metric-card-total";
   if (label === "LC Stock Added") return "metric-card-lc";
   if (label === "Consignment Added") return "metric-card-consignment";
+  if (label === "Original Record") return "activity-detail-origin-card";
+  if (label === "Net Adjustment") return "activity-detail-adjustment-card";
+  if (label === "Reason") return "activity-detail-reason-card";
   return "";
+}
+
+function renderActivityDetailMetricCard(row) {
+  const className = ["metric-card", getActivityDetailMetricClass(row.label)].filter(Boolean).join(" ");
+  if (row.label === "Original Record" && row.href) {
+    return `
+      <div class="${className}">
+        <a class="activity-detail-record-link" href="${escapeHtml(row.href)}" title="Open original record ${escapeHtml(row.value)}">
+          <strong>${escapeHtml(row.displayTitle ?? "Open original transaction")}</strong>
+          ${row.displaySummary ? `<span class="activity-detail-record-summary">${escapeHtml(row.displaySummary)}</span>` : ""}
+          ${row.displayMeta ? `<span class="activity-detail-record-meta">${escapeHtml(row.displayMeta)}</span>` : ""}
+        </a>
+        <span>${escapeHtml(row.label)}</span>
+      </div>
+    `;
+  }
+  if (row.label === "Reason") {
+    return `
+      <div class="${className}">
+        <p class="activity-detail-reason-text">${escapeHtml(row.value)}</p>
+        <span>${escapeHtml(row.label)}</span>
+      </div>
+    `;
+  }
+  const valueMarkup = row.href
+    ? `<a class="activity-detail-record-link" href="${escapeHtml(row.href)}">${escapeHtml(row.value)}</a>`
+    : `<strong>${escapeHtml(row.value)}</strong>`;
+  return `
+    <div class="${className}">
+      ${valueMarkup}
+      <span>${escapeHtml(row.label)}</span>
+    </div>
+  `;
+}
+
+function getActivityDetailSectionCopy(record) {
+  if (record.type === "create") {
+    return {
+      eyebrow: "Master Item",
+      title: "Item information",
+      copy: "Review the master item fields captured when this stock record was created."
+    };
+  }
+  if (record.type === "correction" && getCorrectableRecordKind(record) === "create") {
+    return {
+      eyebrow: "Information Changes",
+      title: "Corrected item fields",
+      copy: "Review the item information before and after this stock creation correction."
+    };
+  }
+  if (record.type === "stock-in") {
+    return {
+      eyebrow: "Stock-In Lines",
+      title: "Received stock lines",
+      copy: "Review the item-level quantities and receiving categories for this stock-in record."
+    };
+  }
+  if (record.type === "stock-out") {
+    return {
+      eyebrow: "Stock-Out Lines",
+      title: "Issued stock lines",
+      copy: "Review the item-level quantities issued and reference details for this stock-out record."
+    };
+  }
+  return {
+    eyebrow: "Correction Lines",
+    title: "Corrected stock movement",
+    copy: "Review the item-level stock balance adjustment created by this correction."
+  };
+}
+
+function renderCreateCorrectionChanges(item) {
+  const labels = {
+    brand: "Brand",
+    model: "Model",
+    name: "Description",
+    sku: "Stock Code",
+    unit: "Unit",
+    location: "Location"
+  };
+  const changedFields = item.changedFields?.length ? item.changedFields : Object.keys(labels);
+  return changedFields.map((field) => `
+    <tr>
+      <td>${escapeHtml(labels[field] ?? field)}</td>
+      <td>${escapeHtml(item.previousValues?.[field] ?? "-")}</td>
+      <td><strong>${escapeHtml(item.correctedValues?.[field] ?? item[field] ?? "-")}</strong></td>
+    </tr>
+  `).join("");
+}
+
+function renderActivityDetailItemsSection(record) {
+  const sectionCopy = getActivityDetailSectionCopy(record);
+  const isCreateRecord = record.type === "create";
+  const isCreateCorrection = record.type === "correction" && getCorrectableRecordKind(record) === "create";
+  const tableMarkup = isCreateCorrection
+    ? `
+      <table class="activity-detail-change-table">
+        <thead>
+          <tr>
+            <th>Field</th>
+            <th>Previous Value</th>
+            <th>Corrected Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${record.itemRows.map((item) => renderCreateCorrectionChanges(item)).join("")}
+        </tbody>
+      </table>
+    `
+    : isCreateRecord
+      ? `
+        <table class="activity-detail-master-table">
+          <thead>
+            <tr>
+              <th>Brand</th>
+              <th>Model</th>
+              <th>Description</th>
+              <th>Stock Code</th>
+              <th>Unit</th>
+              <th>Location</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${record.itemRows.map((item) => `
+              <tr>
+                <td>${escapeHtml(item.brand)}</td>
+                <td>${escapeHtml(item.model)}</td>
+                <td><strong>${escapeHtml(item.name)}</strong></td>
+                <td>${escapeHtml(item.sku)}</td>
+                <td>${escapeHtml(item.unit)}</td>
+                <td>${escapeHtml(item.location)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `
+      : `
+        <table>
+          <thead>
+            <tr>
+              <th>Brand</th>
+              <th>Model</th>
+              <th>Description</th>
+              <th>Stock Code</th>
+              <th>LC Stock</th>
+              <th>Consignment</th>
+              <th>Unit</th>
+              <th>Location</th>
+              ${record.type === "stock-out" ? "<th>Balance After</th>" : ""}
+            </tr>
+          </thead>
+          <tbody>
+            ${record.itemRows.map((item) => `
+              <tr>
+                <td>${escapeHtml(item.brand)}</td>
+                <td>${escapeHtml(item.model)}</td>
+                <td><strong>${escapeHtml(item.name)}</strong></td>
+                <td>${escapeHtml(item.sku)}</td>
+                <td class="activity-detail-quantity-cell"><span class="${getActivityQuantityClass(record.type)}">${escapeHtml(formatActivityDetailQuantity(item.ownQuantity ?? 0, record.type))}</span></td>
+                <td class="activity-detail-quantity-cell"><span class="${getActivityQuantityClass(record.type)}">${escapeHtml(formatActivityDetailQuantity(item.consignmentQuantity ?? 0, record.type))}</span>${item.consignmentToRestock ? `<br><span class="muted">${escapeHtml(String(item.consignmentToRestock))} to restock</span>` : ""}</td>
+                <td>${escapeHtml(item.unit)}</td>
+                <td>${escapeHtml(item.location)}</td>
+                ${record.type === "stock-out" ? `<td class="activity-detail-balance-after">${escapeHtml(String(item.balanceAfter ?? 0))}</td>` : ""}
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `;
+
+  return `
+    <section class="panel activity-detail-items">
+      <div class="panel-header panel-header-tight">
+        <div>
+          <p class="eyebrow">${sectionCopy.eyebrow}</p>
+          <h3>${sectionCopy.title}</h3>
+          <p class="section-copy">${sectionCopy.copy}</p>
+        </div>
+      </div>
+      <div class="table-wrap elevated-table">
+        ${tableMarkup}
+      </div>
+    </section>
+  `;
+}
+
+function renderActivityAuditTrailSection(record, data, activeType, activeId) {
+  const rootType = record.type === "correction" ? record.rootSourceType : record.type;
+  const rootId = record.type === "correction" ? record.rootSourceId : activeId;
+  if (!["create", "stock-in", "stock-out"].includes(rootType) || !rootId) return "";
+
+  const originalRecord = getOriginalAuditRecord(data, rootType, rootId);
+  if (!originalRecord) return "";
+
+  const correctionChain = getCorrectionAuditChain(data, rootType, rootId);
+  if (!correctionChain.length && record.type !== "correction") return "";
+  const nodes = [
+    {
+      type: rootType,
+      id: rootId,
+      title: originalRecord.title,
+      actor: originalRecord.actor,
+      createdAt: originalRecord.createdAt,
+      summary: originalRecord.summary,
+      meta: "Original record"
+    },
+    ...correctionChain.map((correction, index) => ({
+      type: "correction",
+      id: correction.id,
+      title: getCorrectionSourceKind(correction) === "create"
+        ? "Stock Creation Correction"
+        : getCorrectionSourceKind(correction) === "stock-out"
+          ? "Stock-Out Correction"
+          : "Stock-In Correction",
+      actor: correction.actorName ?? "Unknown User",
+      createdAt: correction.createdAt,
+      summary: getCorrectionChangeSummary(correction),
+      reason: correction.reason ?? "No reason provided",
+      meta: `Correction ${index + 1}`
+    }))
+  ];
+
+  return `
+    <section class="panel project-card activity-audit-trail">
+      <div class="panel-header panel-header-tight">
+        <div>
+          <p class="eyebrow">Audit Trail</p>
+          <h3>Correction history</h3>
+          <p class="section-copy">Trace the original record and every correction applied to it. This record has ${correctionChain.length} correction${correctionChain.length === 1 ? "" : "s"}.</p>
+        </div>
+      </div>
+      <div class="activity-audit-list">
+        ${nodes.map((node) => {
+          const isActive = node.type === activeType && node.id === activeId;
+          return `
+            <article class="activity-audit-node activity-audit-node-${node.type === rootType ? "original" : "correction"}${isActive ? " is-active" : ""}">
+              <div class="activity-audit-marker" aria-hidden="true"></div>
+              <div class="activity-audit-card">
+                <div class="activity-audit-card-header">
+                  <div>
+                    <span>${escapeHtml(node.meta)}</span>
+                    <h4>${escapeHtml(node.title)}</h4>
+                  </div>
+                  ${isActive ? `<strong class="activity-audit-current">Current view</strong>` : `<a class="button-link" href="activity-detail.html?type=${encodeURIComponent(node.type)}&id=${encodeURIComponent(node.id)}">Open Record</a>`}
+                </div>
+                <div class="activity-audit-meta">
+                  <span>${escapeHtml(formatDateTime(node.createdAt))}</span>
+                  <span>${escapeHtml(node.actor)}</span>
+                </div>
+                <p>${escapeHtml(node.summary ?? "-")}</p>
+                ${node.reason ? `<p class="activity-audit-reason"><strong>Reason:</strong> ${escapeHtml(node.reason)}</p>` : ""}
+              </div>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
 }
 
 function formatActivityDetailQuantity(value, type) {
@@ -904,32 +1428,75 @@ function getActivityQuantityClass(type) {
 }
 
 function renderCorrectionSection(record) {
-  if (!["stock-in", "stock-out"].includes(record.type)) return "";
+  const correctionKind = record.type === "correction" ? record.rootSourceType : record.type;
+  if (!["create", "stock-in", "stock-out"].includes(correctionKind)) return "";
   if (record.hasCorrection) {
     return `
       <section class="panel project-card correction-panel">
         <div class="panel-header panel-header-tight">
           <div>
             <p class="eyebrow">Correction</p>
-            <h3>This record has already been corrected</h3>
-            <p class="section-copy">Review Activity History to open the linked correction record before applying another operational adjustment.</p>
+            <h3>This record has correction history</h3>
+            <p class="section-copy">Open the latest correction record before applying another adjustment. The original and older correction records remain read-only for audit traceability.</p>
           </div>
+          ${record.latestCorrectionId ? `<a class="button-link" href="activity-detail.html?type=correction&id=${encodeURIComponent(record.latestCorrectionId)}">View Latest Correction</a>` : ""}
         </div>
       </section>
     `;
   }
-  const isStockIn = record.type === "stock-in";
+  const isStockIn = correctionKind === "stock-in";
+  const isCreate = correctionKind === "create";
+  const recordLabel = isCreate ? "stock creation" : isStockIn ? "stock-in" : "stock-out";
   return `
     <section class="panel project-card correction-panel">
-      <div class="panel-header panel-header-tight">
+      <div class="panel-header panel-header-tight correction-gate">
         <div>
           <p class="eyebrow">Correction</p>
-          <h3>Correct this ${isStockIn ? "stock-in" : "stock-out"} record</h3>
-          <p class="section-copy">Create an audit-safe correction. The original record remains unchanged and the inventory balance is adjusted by the correction.</p>
+          <h3>Correction required?</h3>
+          <p class="section-copy">Use this only to fix ${recordLabel} information that was keyed wrongly. A correction creates an audit record and cannot be casually undone.</p>
         </div>
+        <button type="button" class="button-secondary" data-start-correction>Start Correction</button>
       </div>
-      <form id="correction-form" class="stack-form">
-        <div class="table-wrap elevated-table">
+      <form id="correction-form" class="stack-form correction-form" hidden>
+        <div class="correction-form-header">
+          <div>
+            <p class="eyebrow">Active Correction</p>
+            <h3>Correct this ${recordLabel} record</h3>
+            <p class="section-copy">${isCreate ? "Create an audit-safe correction for item information keyed wrongly during creation." : "Create an audit-safe correction. The original record remains unchanged and the inventory balance is adjusted by the correction."}</p>
+          </div>
+          <button type="button" class="button-link" data-cancel-correction>Cancel Correction</button>
+        </div>
+        ${isCreate ? `
+          <div class="field-grid">
+            ${record.itemRows.map((item, index) => `
+              <label>
+                Brand
+                <input name="correctBrand-${index}" type="text" value="${escapeHtml(item.brand ?? "")}" placeholder="CommScope" required>
+              </label>
+              <label>
+                Model
+                <input name="correctModel-${index}" type="text" value="${escapeHtml(item.model ?? "")}" placeholder="Cat6 305M" required>
+              </label>
+              <label>
+                Description
+                <input name="correctName-${index}" type="text" value="${escapeHtml(item.name ?? "")}" placeholder="Cat6 UTP Cable Box 305m" required>
+              </label>
+              <label>
+                Stock code
+                <input name="correctSku-${index}" type="text" value="${escapeHtml(item.sku ?? "")}" placeholder="SC-001" required>
+              </label>
+              <label>
+                Unit
+                <input name="correctUnit-${index}" type="text" value="${escapeHtml(item.unit ?? "")}" placeholder="pcs / rolls / m" required>
+              </label>
+              <label>
+                Location
+                <input name="correctLocation-${index}" type="text" value="${escapeHtml(item.location ?? "")}" placeholder="Main Store A-01" required>
+              </label>
+            `).join("")}
+          </div>
+        ` : `
+          <div class="table-wrap elevated-table">
           <table>
             <thead>
               <tr>
@@ -963,13 +1530,14 @@ function renderCorrectionSection(record) {
             </tbody>
           </table>
         </div>
+        `}
         <label>
           Correction reason
-          <textarea id="correction-reason" rows="3" required placeholder="Example: quantity keyed wrongly, wrong category selected, duplicate entry"></textarea>
+          <textarea id="correction-reason" rows="3" required placeholder="${isCreate ? "Example: stock code keyed wrongly, wrong brand selected, typo in description" : "Example: quantity keyed wrongly, wrong category selected, duplicate entry"}"></textarea>
         </label>
         <div class="form-actions">
           <button type="submit" class="button-secondary">Save Correction</button>
-          <span class="form-hint">Corrections create a new audit record and update inventory balances.</span>
+          <span class="form-hint">Corrections create a new audit record and update ${isCreate ? "the master item information" : "inventory balances"}.</span>
         </div>
       </form>
     </section>
@@ -1510,6 +2078,7 @@ function updateStockPickerButton(button, item, options = {}) {
   if (!button) return;
   const quantityLabel = options.quantityLabel ?? "available";
   const placeholderMeta = options.placeholderMeta ?? "Search by description, SKU, brand, or category";
+  button.dataset.hasSelection = String(Boolean(item));
   button.innerHTML = item
     ? `
       <span class="stock-picker-button-title">${escapeHtml(item.name)}</span>
@@ -1582,27 +2151,36 @@ function renderStockOutIssueList(container, emptyState, summary, inventory) {
   }
 
   const totalLines = rows.length;
-  const totalQuantity = rows.reduce((sum, row) => {
-    const qty = Number(row.querySelector('input[name="issueQuantity"]')?.value ?? "0");
-    return sum + Math.max(qty, 0);
-  }, 0);
+  let totalOwnQuantity = 0;
+  let totalConsignmentQuantity = 0;
 
   rows.forEach((row) => {
     const item = inventory.find((entry) => entry.id === row.dataset.itemId);
+    const issueSource = row.dataset.issueSource === "consignment" ? "consignment" : "own";
     const qty = Number(row.querySelector('input[name="issueQuantity"]')?.value ?? "0");
+    if (issueSource === "consignment") {
+      totalConsignmentQuantity += Math.max(qty, 0);
+    } else {
+      totalOwnQuantity += Math.max(qty, 0);
+    }
     const availableCell = row.querySelector("[data-stock-out-available]");
     if (availableCell) {
       availableCell.innerHTML = item ? renderStockBreakdownChips(item) : "-";
     }
     const consignmentNotice = row.querySelector("[data-stock-out-consignment-notice]");
     if (consignmentNotice) {
-      const noticeText = item ? renderConsignmentDrawNotice(item, qty) : "";
+      const availableForSource = issueSource === "consignment"
+        ? Number(item?.consignmentQuantity ?? 0)
+        : Number(item?.ownQuantity ?? item?.quantity ?? 0);
+      const noticeText = item && qty > availableForSource
+        ? `Only ${availableForSource} ${issueSource === "consignment" ? "consignment" : "LC Stock"} available`
+        : "";
       consignmentNotice.hidden = !noticeText;
       consignmentNotice.textContent = noticeText;
     }
   });
 
-  summary.textContent = `${totalLines} item line${totalLines === 1 ? "" : "s"} | Total issue quantity ${totalQuantity}`;
+  summary.textContent = `${totalLines} item line${totalLines === 1 ? "" : "s"} | LC Stock ${totalOwnQuantity} | Consignment ${totalConsignmentQuantity}`;
 }
 
 function getActivityEvents(data) {
@@ -1690,17 +2268,21 @@ function getActivityEvents(data) {
   const corrections = (data.corrections ?? []).map((entry) => {
     const itemLines = (entry.itemRows ?? []).map((row) => row.name ?? row.sku ?? "Item");
     const totalDelta = (entry.itemRows ?? []).reduce((sum, row) => sum + Number(row.quantityDelta || 0), 0);
+    const sourceKind = getCorrectionSourceKind(entry) ?? entry.sourceType;
+    const isCreateCorrection = sourceKind === "create";
     return {
       id: `correction-${entry.id}`,
       type: "correction",
       sourceId: entry.id,
-      title: entry.sourceType === "stock-out" ? "Stock-Out Correction" : "Stock-In Correction",
+      title: isCreateCorrection ? "Stock Creation Correction" : sourceKind === "stock-out" ? "Stock-Out Correction" : "Stock-In Correction",
       actor: entry.actorName ?? "Unknown User",
       itemSummary: itemLines.join(", "),
       itemLines,
-      detail: `${totalDelta >= 0 ? "Net adjustment +" : "Net adjustment "}${totalDelta} | ${entry.reason ?? "No reason provided"}`,
+      detail: isCreateCorrection
+        ? `Item information corrected | ${entry.reason ?? "No reason provided"}`
+        : `${totalDelta >= 0 ? "Net adjustment +" : "Net adjustment "}${totalDelta} | ${entry.reason ?? "No reason provided"}`,
       detailRows: [
-        { label: "Net adjustment", value: `${totalDelta >= 0 ? "+" : ""}${totalDelta}` },
+        ...(isCreateCorrection ? [{ label: "Change Type", value: "Item information" }] : [{ label: "Net adjustment", value: `${totalDelta >= 0 ? "+" : ""}${totalDelta}` }]),
         { label: "Reason", value: entry.reason ?? "No reason provided" }
       ],
       quantityText: formatLineItemCount(itemLines.length),
@@ -1713,12 +2295,94 @@ function getActivityEvents(data) {
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
+function getCorrectionChildren(data, sourceType, sourceId) {
+  return (data.corrections ?? [])
+    .filter((entry) => entry.sourceType === sourceType && entry.sourceId === sourceId)
+    .sort((a, b) => new Date(a.createdAt ?? 0) - new Date(b.createdAt ?? 0));
+}
+
+function getLatestCorrection(data, sourceType, sourceId) {
+  const children = getCorrectionChildren(data, sourceType, sourceId);
+  if (!children.length) return null;
+  let latest = children[children.length - 1];
+  let next = getLatestCorrection(data, "correction", latest.id);
+  while (next) {
+    latest = next;
+    next = getLatestCorrection(data, "correction", latest.id);
+  }
+  return latest;
+}
+
+function getCorrectionSourceKind(correction) {
+  if (!correction) return null;
+  if (correction.sourceType === "correction") {
+    return correction.rootSourceType ?? correction.baseSourceType ?? null;
+  }
+  return correction.sourceType;
+}
+
+function getRootCorrectionSource(data, correction) {
+  let current = correction;
+  const seen = new Set();
+  while (current?.sourceType === "correction" && current.sourceId && !seen.has(current.sourceId)) {
+    seen.add(current.sourceId);
+    const parent = (data.corrections ?? []).find((entry) => entry.id === current.sourceId);
+    if (!parent) break;
+    current = parent;
+  }
+  return {
+    type: current?.sourceType ?? correction?.sourceType,
+    id: current?.sourceId ?? correction?.sourceId
+  };
+}
+
+function getCorrectionAuditChain(data, sourceType, sourceId) {
+  const chain = [];
+  let currentType = sourceType;
+  let currentId = sourceId;
+  const seen = new Set();
+
+  while (currentType && currentId && !seen.has(`${currentType}:${currentId}`)) {
+    seen.add(`${currentType}:${currentId}`);
+    const children = getCorrectionChildren(data, currentType, currentId);
+    if (!children.length) break;
+    const nextCorrection = children[children.length - 1];
+    chain.push(nextCorrection);
+    currentType = "correction";
+    currentId = nextCorrection.id;
+  }
+
+  return chain;
+}
+
+function getCorrectionChangeSummary(correction) {
+  const sourceKind = getCorrectionSourceKind(correction) ?? correction.sourceType;
+  if (sourceKind === "create") {
+    const changedCount = (correction.itemRows ?? []).reduce((sum, row) => sum + (row.changedFields?.length ?? 0), 0);
+    return `${changedCount || "Item"} information field${changedCount === 1 ? "" : "s"} corrected`;
+  }
+  const totalDelta = (correction.itemRows ?? []).reduce((sum, row) => sum + Number(row.quantityDelta || 0), 0);
+  return `Net stock adjustment ${totalDelta >= 0 ? "+" : ""}${totalDelta}`;
+}
+
+function getOriginalAuditRecord(data, sourceType, sourceId) {
+  if (!sourceType || !sourceId) return null;
+  if (sourceType === "correction") {
+    const correction = (data.corrections ?? []).find((entry) => entry.id === sourceId);
+    const root = getRootCorrectionSource(data, correction);
+    return getOriginalAuditRecord(data, root.type, root.id);
+  }
+  return getActivityDetailRecord(sourceType, sourceId, data);
+}
+
 function getActivityDetailRecord(type, id, data) {
   if (type === "create") {
     const item = data.inventory.find((entry) => entry.id === id);
     if (!item) return null;
+    const latestCorrection = getLatestCorrection(data, type, id);
     return {
       type,
+      sourceId: item.id,
       title: "Stock Creation Record",
       actor: item.createdByName ?? "Unknown User",
       createdAt: item.createdAt,
@@ -1727,12 +2391,11 @@ function getActivityDetailRecord(type, id, data) {
         { label: "Brand", value: item.brand ?? "Generic" },
         { label: "Model", value: item.model ?? "Standard" },
         { label: "Stock Code", value: item.sku ?? "-" },
-        { label: "LC Stock", value: item.ownQuantity ?? item.quantity ?? 0 },
-        { label: "Consignment Available", value: item.consignmentQuantity ?? 0 },
-        { label: "Consignment To Restock", value: getConsignmentUsed(item) },
+        { label: "Unit", value: item.unit ?? "-" },
         { label: "Location", value: item.location ?? "Main Store" }
       ],
       itemRows: [{
+        itemId: item.id,
         brand: item.brand ?? "Generic",
         model: item.model ?? "Standard",
         name: item.name ?? "-",
@@ -1744,6 +2407,9 @@ function getActivityDetailRecord(type, id, data) {
         unit: item.unit ?? "-",
         location: item.location ?? "Main Store"
       }],
+      hasCorrection: Boolean(latestCorrection),
+      latestCorrectionId: latestCorrection?.id ?? null,
+      canCorrect: !latestCorrection,
       handoverId: null
     };
   }
@@ -1766,6 +2432,7 @@ function getActivityDetailRecord(type, id, data) {
       }
     }
     if (!adjustments.length) return null;
+    const latestCorrection = getLatestCorrection(data, type, id);
     const firstAdjustment = adjustments[0];
     const totalQuantity = adjustments.reduce((sum, adjustment) => sum + Number(adjustment.quantity || 0), 0);
     const lcQuantity = adjustments
@@ -1814,7 +2481,9 @@ function getActivityDetailRecord(type, id, data) {
           balanceAfter: adjustment.balanceAfter ?? null
         };
       }),
-      hasCorrection: (data.corrections ?? []).some((entry) => entry.sourceType === type && entry.sourceId === id),
+      hasCorrection: Boolean(latestCorrection),
+      latestCorrectionId: latestCorrection?.id ?? null,
+      canCorrect: !latestCorrection,
       handoverId: null
     };
   }
@@ -1822,6 +2491,7 @@ function getActivityDetailRecord(type, id, data) {
   if (type === "stock-out") {
     const stockOut = data.stockOuts.find((entry) => entry.id === id);
     if (!stockOut) return null;
+    const latestCorrection = getLatestCorrection(data, type, id);
     const items = normalizeStockOutItems(stockOut, data.inventory);
     const balanceRows = items.map((line) => {
       const hasBalanceAfterSnapshot = line.balanceAfter && typeof line.balanceAfter === "object";
@@ -1878,7 +2548,9 @@ function getActivityDetailRecord(type, id, data) {
         consignmentToRestock: line.consignmentToRestock ?? 0
       })),
       balanceRows,
-      hasCorrection: (data.corrections ?? []).some((entry) => entry.sourceType === type && entry.sourceId === id),
+      hasCorrection: Boolean(latestCorrection),
+      latestCorrectionId: latestCorrection?.id ?? null,
+      canCorrect: !latestCorrection,
       handoverId: stockOut.id
     };
   }
@@ -1887,15 +2559,38 @@ function getActivityDetailRecord(type, id, data) {
     const correction = (data.corrections ?? []).find((entry) => entry.id === id);
     if (!correction) return null;
     const totalDelta = (correction.itemRows ?? []).reduce((sum, row) => sum + Number(row.quantityDelta || 0), 0);
+    const latestCorrection = getLatestCorrection(data, "correction", id);
+    const rootSource = getRootCorrectionSource(data, correction);
+    const sourceKind = getCorrectionSourceKind(correction) ?? rootSource.type ?? correction.sourceType;
+    const isCreateCorrection = sourceKind === "create";
+    const originalRecord = correction.sourceType && correction.sourceId
+      ? getActivityDetailRecord(correction.sourceType, correction.sourceId, data)
+      : null;
     return {
       type,
-      title: correction.sourceType === "stock-out" ? "Stock-Out Correction Record" : "Stock-In Correction Record",
+      sourceType: correction.sourceType,
+      rootSourceType: rootSource.type,
+      rootSourceId: rootSource.id,
+      title: isCreateCorrection ? "Stock Creation Correction Record" : sourceKind === "stock-out" ? "Stock-Out Correction Record" : "Stock-In Correction Record",
       actor: correction.actorName ?? "Unknown User",
       createdAt: correction.createdAt,
-      summary: `Correction for ${correction.sourceType === "stock-out" ? "stock-out" : "stock-in"} record`,
+      summary: `Correction for ${isCreateCorrection ? "stock creation" : sourceKind === "stock-out" ? "stock-out" : "stock-in"} record`,
       detailRows: [
-        { label: "Original Record", value: correction.sourceId ?? "-" },
-        { label: "Net Adjustment", value: `${totalDelta >= 0 ? "+" : ""}${totalDelta}` },
+        {
+          label: "Original Record",
+          value: correction.sourceId ?? "-",
+          href: correction.sourceType && correction.sourceId
+            ? `activity-detail.html?type=${encodeURIComponent(correction.sourceType)}&id=${encodeURIComponent(correction.sourceId)}`
+            : null,
+          displayTitle: originalRecord?.title ?? "Open original transaction",
+          displaySummary: originalRecord?.summary ?? (isCreateCorrection ? "Stock creation record" : sourceKind === "stock-out" ? "Stock-out transaction" : "Stock-in transaction"),
+          displayMeta: originalRecord
+            ? `${formatDateTime(originalRecord.createdAt)} | ${originalRecord.actor}`
+            : null
+        },
+        isCreateCorrection
+          ? { label: "Change Type", value: "Item information" }
+          : { label: "Net Adjustment", value: `${totalDelta >= 0 ? "+" : ""}${totalDelta}` },
         { label: "Reason", value: correction.reason ?? "No reason provided" }
       ],
       itemRows: (correction.itemRows ?? []).map((row) => ({
@@ -1904,20 +2599,27 @@ function getActivityDetailRecord(type, id, data) {
         name: row.name ?? "-",
         itemId: row.itemId,
         sku: row.sku ?? "-",
-        quantity: row.quantityDelta ?? 0,
-        ownQuantity: row.ownDelta ?? 0,
-        consignmentQuantity: row.consignmentDelta ?? 0,
+        quantity: row.correctedValues?.quantity ?? row.quantity ?? row.quantityDelta ?? 0,
+        stockType: row.correctedValues?.stockType ?? row.stockType ?? "own",
+        ownQuantity: row.correctedValues?.ownQuantity ?? row.ownQuantity ?? row.ownDelta ?? 0,
+        consignmentQuantity: row.correctedValues?.consignmentQuantity ?? row.consignmentQuantity ?? row.consignmentDelta ?? 0,
         consignmentToRestock: row.balanceAfter?.consignmentToRestock ?? 0,
         unit: row.unit ?? "-",
         location: row.location ?? "-",
-        balanceAfter: row.balanceAfter?.quantity ?? 0
+        balanceAfter: row.balanceAfter?.quantity ?? 0,
+        previousValues: row.previousValues ?? null,
+        correctedValues: row.correctedValues ?? null,
+        changedFields: row.changedFields ?? []
       })),
-      balanceRows: (correction.itemRows ?? []).map((row) => ({
+      balanceRows: isCreateCorrection ? [] : (correction.itemRows ?? []).map((row) => ({
         name: row.name ?? "Deleted item",
         sku: row.sku ?? "-",
         balanceBefore: row.balanceBefore ?? null,
         balanceAfter: row.balanceAfter ?? null
       })),
+      hasCorrection: Boolean(latestCorrection),
+      latestCorrectionId: latestCorrection?.id ?? null,
+      canCorrect: !latestCorrection,
       handoverId: null
     };
   }
@@ -2049,7 +2751,8 @@ function applyActivityCorrection(type, id, form) {
   const record = getActivityDetailRecord(type, id, nextData);
   const currentUser = getCurrentUser();
   const reason = form.querySelector("#correction-reason")?.value.trim() ?? "";
-  if (!record || !["stock-in", "stock-out"].includes(record.type)) return { ok: false, message: "This activity record cannot be corrected." };
+  const correctionKind = getCorrectableRecordKind(record);
+  if (!record || !["create", "stock-in", "stock-out"].includes(correctionKind)) return { ok: false, message: "This activity record cannot be corrected." };
   if (!reason) return { ok: false, message: "Enter a correction reason before saving." };
   if ((nextData.corrections ?? []).some((entry) => entry.sourceType === type && entry.sourceId === id)) {
     return { ok: false, message: "This record already has a correction. Review the correction record before applying another change." };
@@ -2057,6 +2760,69 @@ function applyActivityCorrection(type, id, form) {
 
   const correctionRows = [];
   const timestamp = new Date().toISOString();
+
+  if (correctionKind === "create") {
+    const original = record.itemRows[0];
+    const item = nextData.inventory.find((entry) => entry.id === original?.itemId);
+    if (!original || !item) return { ok: false, message: "The inventory item could not be found." };
+
+    const nextValues = {
+      brand: String(form.elements["correctBrand-0"]?.value ?? "").trim().replace(/\s+/g, " "),
+      model: String(form.elements["correctModel-0"]?.value ?? "").trim().replace(/\s+/g, " "),
+      name: String(form.elements["correctName-0"]?.value ?? "").trim().replace(/\s+/g, " "),
+      sku: String(form.elements["correctSku-0"]?.value ?? "").trim().replace(/\s+/g, " "),
+      unit: String(form.elements["correctUnit-0"]?.value ?? "").trim().replace(/\s+/g, " "),
+      location: String(form.elements["correctLocation-0"]?.value ?? "").trim().replace(/\s+/g, " ")
+    };
+
+    if (Object.values(nextValues).some((value) => !value)) {
+      return { ok: false, message: "Please complete all item information before saving." };
+    }
+
+    const previousValues = {
+      brand: item.brand ?? "Generic",
+      model: item.model ?? "Standard",
+      name: item.name ?? "-",
+      sku: item.sku ?? "-",
+      unit: item.unit ?? "-",
+      location: item.location ?? "Main Store"
+    };
+    const changedFields = Object.keys(nextValues).filter((key) => String(previousValues[key] ?? "") !== String(nextValues[key] ?? ""));
+    if (!changedFields.length) return { ok: false, message: "No item information changes were entered." };
+
+    Object.assign(item, nextValues, {
+      lastUpdatedAt: timestamp,
+      lastUpdatedByUserId: currentUser?.id ?? null,
+      lastUpdatedByName: getUserDisplayName(currentUser)
+    });
+
+    correctionRows.push({
+      itemId: item.id,
+      ...nextValues,
+      quantity: 0,
+      ownQuantity: item.ownQuantity ?? item.quantity ?? 0,
+      consignmentQuantity: item.consignmentQuantity ?? 0,
+      previousValues,
+      correctedValues: nextValues,
+      changedFields
+    });
+
+    const correction = {
+      id: crypto.randomUUID(),
+      sourceType: type,
+      sourceId: id,
+      rootSourceType: record.rootSourceType ?? type,
+      rootSourceId: record.rootSourceId ?? id,
+      reason,
+      itemRows: correctionRows,
+      createdAt: timestamp,
+      actorUserId: currentUser?.id ?? null,
+      actorName: getUserDisplayName(currentUser)
+    };
+    nextData.corrections = [...(nextData.corrections ?? []), correction];
+    saveData(nextData);
+    return { ok: true, correctionId: correction.id };
+  }
 
   for (const [index] of Array.from(form.querySelectorAll("[data-correction-row]")).entries()) {
     const original = record.itemRows[index];
@@ -2073,7 +2839,7 @@ function applyActivityCorrection(type, id, form) {
 
     let ownDelta = 0;
     let consignmentDelta = 0;
-    if (type === "stock-in") {
+    if (correctionKind === "stock-in") {
       const correctQuantity = Math.max(Number(form.elements[`correctQuantity-${index}`]?.value ?? 0), 0);
       const correctStockType = form.elements[`correctStockType-${index}`]?.value === "consignment" ? "consignment" : "own";
       ownDelta = (correctStockType === "consignment" ? 0 : correctQuantity) - Number(original.ownQuantity ?? 0);
@@ -2093,7 +2859,7 @@ function applyActivityCorrection(type, id, form) {
 
     item.ownQuantity = currentOwn + ownDelta;
     item.consignmentQuantity = currentConsignment + consignmentDelta;
-    if (type === "stock-in" && consignmentDelta < 0) {
+    if (correctionKind === "stock-in" && consignmentDelta < 0) {
       item.consignmentBaseline = Math.max(Number(item.consignmentBaseline ?? 0) + consignmentDelta, item.consignmentQuantity, 0);
     } else {
       item.consignmentBaseline = Math.max(Number(item.consignmentBaseline ?? 0), item.consignmentQuantity);
@@ -2122,6 +2888,19 @@ function applyActivityCorrection(type, id, form) {
       quantityDelta: ownDelta + consignmentDelta,
       ownDelta,
       consignmentDelta,
+      quantity: correctionKind === "stock-in" ? Math.max(Number(form.elements[`correctQuantity-${index}`]?.value ?? 0), 0) : ownDelta + consignmentDelta,
+      stockType: correctionKind === "stock-in" && form.elements[`correctStockType-${index}`]?.value === "consignment" ? "consignment" : "own",
+      ownQuantity: correctionKind === "stock-out" ? Math.max(Number(form.elements[`correctOwn-${index}`]?.value ?? 0), 0) : Math.max(Number(form.elements[`correctStockType-${index}`]?.value === "consignment" ? 0 : form.elements[`correctQuantity-${index}`]?.value ?? 0), 0),
+      consignmentQuantity: correctionKind === "stock-out" ? Math.max(Number(form.elements[`correctConsignment-${index}`]?.value ?? 0), 0) : Math.max(Number(form.elements[`correctStockType-${index}`]?.value === "consignment" ? form.elements[`correctQuantity-${index}`]?.value ?? 0 : 0), 0),
+      correctedValues: correctionKind === "stock-in"
+        ? {
+            quantity: Math.max(Number(form.elements[`correctQuantity-${index}`]?.value ?? 0), 0),
+            stockType: form.elements[`correctStockType-${index}`]?.value === "consignment" ? "consignment" : "own"
+          }
+        : {
+            ownQuantity: Math.max(Number(form.elements[`correctOwn-${index}`]?.value ?? 0), 0),
+            consignmentQuantity: Math.max(Number(form.elements[`correctConsignment-${index}`]?.value ?? 0), 0)
+          },
       balanceBefore,
       balanceAfter
     });
@@ -2133,6 +2912,8 @@ function applyActivityCorrection(type, id, form) {
     id: crypto.randomUUID(),
     sourceType: type,
     sourceId: id,
+    rootSourceType: record.rootSourceType ?? type,
+    rootSourceId: record.rootSourceId ?? id,
     reason,
     itemRows: correctionRows,
     createdAt: timestamp,
@@ -2208,6 +2989,8 @@ function syncCustomSelect(select) {
   const button = customSelect.querySelector("[data-custom-select-button]");
   const list = customSelect.querySelector("[data-custom-select-list]");
   const selectedOption = select.selectedOptions[0] ?? select.options[0];
+  const hasSelectedValue = Boolean(select.value && select.value !== "all");
+  customSelect.dataset.hasSelection = String(hasSelectedValue);
 
   if (button) {
     button.textContent = selectedOption?.textContent ?? "Select";
@@ -2554,6 +3337,8 @@ function renderActivityHistoryPage() {
   if (dateToFilter.value !== selectedDateTo) {
     dateToFilter.value = selectedDateTo;
   }
+  dateFromFilter.max = selectedDateTo;
+  dateToFilter.min = selectedDateFrom;
   if (String(pageSizeSelect.value) !== String(pageSize)) {
     pageSizeSelect.value = String(pageSize);
   }
@@ -2584,15 +3369,6 @@ function renderActivityHistoryPage() {
   });
 
   let filteredEvents = filterEvents(selectedDateFrom, selectedDateTo);
-  const hasDateFilter = Boolean(selectedDateFrom || selectedDateTo);
-
-  if (!filteredEvents.length && allEvents.length && hasDateFilter && filterEvents("", "").length) {
-    localStorage.removeItem(dateFromKey);
-    localStorage.removeItem(dateToKey);
-    dateFromFilter.value = "";
-    dateToFilter.value = "";
-    filteredEvents = filterEvents("", "");
-  }
 
   const hasActiveActivityFilters = selectedType !== "all"
     || actorFilter.value !== "all"
@@ -2632,7 +3408,7 @@ function renderActivityHistoryPage() {
                     ${event.detailRows.map((row) => `
                       <div class="activity-detail-line">
                         <span>${escapeHtml(row.label)}</span>
-                        <strong>${escapeHtml(row.value)}</strong>
+                        <strong class="activity-detail-preview-value">${escapeHtml(row.value)}</strong>
                       </div>
                     `).join("")}
                   </div>`
@@ -2774,32 +3550,87 @@ function renderActivityHistoryPage() {
 function initCreateStockPage() {
   const content = document.querySelector(".main-shell");
   const inventoryForm = document.querySelector("#inventory-form");
-  if (!content || !inventoryForm) return;
+  const modelSelect = document.querySelector("#create-model-select");
+  const newModelField = document.querySelector("#create-new-model-field");
+  const newModelInput = document.querySelector("#create-model-new");
+  if (!content || !inventoryForm || !modelSelect || !newModelField || !newModelInput) return;
+
+  const newModelValue = "__new_model__";
+  const getModels = () => getUniqueInventoryValues(loadData().inventory, "model");
+  const renderModelOptions = (selectedValue = "") => {
+    const models = getModels();
+    const canRestoreSelectedValue = selectedValue && (selectedValue === newModelValue || models.includes(selectedValue));
+    const safeSelectedValue = canRestoreSelectedValue ? selectedValue : "";
+    modelSelect.innerHTML = [
+      `<option value="" disabled ${safeSelectedValue ? "" : "selected"}>Select a model</option>`,
+      ...models.map((model) => `<option value="${escapeHtml(model)}" ${model === safeSelectedValue ? "selected" : ""}>${escapeHtml(model)}</option>`),
+      `<option value="${newModelValue}" ${safeSelectedValue === newModelValue ? "selected" : ""}>Model not listed</option>`
+    ].join("");
+    if (safeSelectedValue) {
+      modelSelect.value = safeSelectedValue;
+    }
+    syncCustomSelect(modelSelect);
+  };
+  const updateNewModelState = () => {
+    const isAddingNewModel = modelSelect.value === newModelValue;
+    newModelField.hidden = !isAddingNewModel;
+    newModelInput.required = isAddingNewModel;
+    newModelInput.disabled = !isAddingNewModel;
+    if (!isAddingNewModel) newModelInput.value = "";
+  };
+  const resolveModelValue = () => {
+    const models = getModels();
+    if (modelSelect.value !== newModelValue) return modelSelect.value.trim();
+
+    const requestedModel = newModelInput.value.trim().replace(/\s+/g, " ");
+    const existingModel = models.find((model) => model.toLowerCase() === requestedModel.toLowerCase());
+    return existingModel ?? requestedModel;
+  };
+
+  renderModelOptions();
+  updateNewModelState();
+  enhanceFilterSelects(inventoryForm);
 
   if (!inventoryForm.dataset.bound) {
-    inventoryForm.addEventListener("submit", (event) => {
+    modelSelect.addEventListener("change", updateNewModelState);
+
+    inventoryForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = new FormData(inventoryForm);
-      const nextData = loadData();
       const currentUser = getCurrentUser();
       const timestamp = new Date().toISOString();
       const userStamp = buildUserStamp(currentUser);
-      const ownQuantity = Math.max(Number(form.get("quantity") || "0"), 0);
-      const consignmentQuantity = Math.max(Number(form.get("consignmentQuantity") || "0"), 0);
+      const model = resolveModelValue();
+      if (!model) {
+        showNotice(content, "Choose an existing model or enter a new model before saving.");
+        return;
+      }
+      const pendingItem = {
+        brand: String(form.get("brand") ?? "").trim(),
+        model,
+        name: String(form.get("name") ?? "").trim(),
+        sku: String(form.get("sku") ?? "").trim(),
+        unit: String(form.get("unit") ?? "").trim(),
+        location: String(form.get("location") ?? "").trim()
+      };
 
+      const confirmed = await showCreateStockConfirmationDialog(pendingItem);
+      if (!confirmed) return;
+
+      const nextData = loadData();
       nextData.inventory.push({
         id: crypto.randomUUID(),
-        brand: form.get("brand").trim(),
-        model: form.get("model").trim(),
-        name: form.get("name").trim(),
-        sku: form.get("sku").trim(),
-        unit: form.get("unit").trim(),
-        quantity: ownQuantity + consignmentQuantity,
-        ownQuantity,
-        consignmentQuantity,
-        consignmentBaseline: consignmentQuantity,
+        brand: pendingItem.brand,
+        model: pendingItem.model,
+        name: pendingItem.name,
+        sku: pendingItem.sku,
+        unit: pendingItem.unit,
+        quantity: 0,
+        ownQuantity: 0,
+        consignmentQuantity: 0,
+        consignmentBaseline: 0,
         reorderLevel: 0,
-        location: form.get("location").trim(),
+        location: pendingItem.location,
         createdAt: timestamp,
         lastUpdatedAt: timestamp,
         ...userStamp
@@ -2807,7 +3638,9 @@ function initCreateStockPage() {
 
       saveData(nextData);
       inventoryForm.reset();
-      showNotice(content, `Inventory item saved under ${getUserDisplayName(currentUser)}.`);
+      renderModelOptions("");
+      updateNewModelState();
+      showToast(`Inventory item added successfully by ${getUserDisplayName(currentUser)}.`);
     });
     inventoryForm.dataset.bound = "true";
   }
@@ -3075,6 +3908,7 @@ function initDrawStockPage() {
   const content = document.querySelector(".main-shell");
   const stockOutItemSelect = document.querySelector("#stock-out-item");
   const stockOutQuantityInput = document.querySelector("#stock-out-quantity");
+  const stockOutSourceSelect = document.querySelector("#stock-out-source") ?? { value: "own" };
   const stockOutLines = document.querySelector("#stock-out-lines");
   const stockOutEmpty = document.querySelector("#stock-out-empty");
   const stockOutSummary = document.querySelector("#stock-out-summary");
@@ -3088,6 +3922,28 @@ function initDrawStockPage() {
   if (!content || !stockOutItemSelect || !stockOutQuantityInput || !stockOutLines || !stockOutEmpty || !stockOutSummary || !addStockOutLineButton || !stockOutForm) {
     return;
   }
+
+  const updateStockOutSourceOptions = (item) => {
+    if (!stockOutSourceSelect || !("options" in stockOutSourceSelect)) return;
+    const ownAvailable = Math.max(Number(item?.ownQuantity ?? item?.quantity ?? 0), 0);
+    const consignmentAvailable = Math.max(Number(item?.consignmentQuantity ?? 0), 0);
+    const currentValue = stockOutSourceSelect.value === "consignment" ? "consignment" : "own";
+
+    stockOutSourceSelect.innerHTML = `
+      <option value="own"${ownAvailable <= 0 ? " disabled" : ""}>LC Stock</option>
+      <option value="consignment"${consignmentAvailable <= 0 ? " disabled" : ""}>Consignment</option>
+    `;
+
+    if (currentValue === "consignment" && consignmentAvailable > 0) {
+      stockOutSourceSelect.value = "consignment";
+    } else if (ownAvailable > 0) {
+      stockOutSourceSelect.value = "own";
+    } else if (consignmentAvailable > 0) {
+      stockOutSourceSelect.value = "consignment";
+    } else {
+      stockOutSourceSelect.value = "own";
+    }
+  };
 
   const refreshDrawStockOptions = () => {
     const data = loadData();
@@ -3103,10 +3959,69 @@ function initDrawStockPage() {
     const selectedItem = data.inventory.find((item) => item.id === stockOutItemSelect.value);
     renderStockPickerList(stockPickerList, data.inventory, stockOutItemSelect.value, stockPickerSearch?.value ?? "");
     updateStockPickerButton(stockPickerButton, selectedItem);
+    updateStockOutSourceOptions(selectedItem);
     renderStockOutIssueList(stockOutLines, stockOutEmpty, stockOutSummary, data.inventory);
   };
 
   refreshDrawStockOptions();
+
+  const addStockOutLine = () => {
+    const currentData = loadData();
+    const itemId = stockOutItemSelect.value;
+    const quantity = Number(stockOutQuantityInput.value || "0");
+    const issueSource = stockOutSourceSelect.value === "consignment" ? "consignment" : "own";
+    const item = currentData.inventory.find((entry) => entry.id === itemId);
+
+    if (!itemId || !item || quantity <= 0) {
+      showNotice(content, "Choose an item and enter a valid quantity before adding it to the issue list.");
+      return;
+    }
+
+    const existingRow = stockOutLines.querySelector(`[data-item-id="${itemId}"][data-issue-source="${issueSource}"]`);
+    const existingQuantity = existingRow
+      ? Number(existingRow.querySelector('input[name="issueQuantity"]')?.value ?? "0")
+      : 0;
+    const availableForSource = issueSource === "consignment"
+      ? Number(item.consignmentQuantity ?? 0)
+      : Number(item.ownQuantity ?? item.quantity ?? 0);
+    if (existingQuantity + quantity > availableForSource) {
+      showNotice(content, `${item.name} only has ${availableForSource} ${issueSource === "consignment" ? "consignment" : "LC Stock"} available.`);
+      return;
+    }
+
+    if (existingRow) {
+      const quantityInput = existingRow.querySelector('input[name="issueQuantity"]');
+      quantityInput.value = Number(quantityInput.value || "0") + quantity;
+    } else {
+      stockOutLines.insertAdjacentHTML("beforeend", `
+        <tr data-stock-out-item-row data-item-id="${item.id}" data-issue-source="${issueSource}">
+          <td><strong>${escapeHtml(item.name)}</strong><br><span class="muted">${escapeHtml(item.brand ?? "Generic")} / ${escapeHtml(item.model ?? "Standard")}</span></td>
+          <td>${escapeHtml(item.sku)}</td>
+          <td data-stock-out-available>${renderStockBreakdownChips(item)}</td>
+          <td><span class="inline-stock-chip ${issueSource === "consignment" ? "inline-stock-chip-consign" : "inline-stock-chip-own"}">${escapeHtml(formatStockPurposeLabel(issueSource))}</span></td>
+          <td>
+            <input class="stock-out-qty-input" name="issueQuantity" type="number" min="1" step="1" value="${quantity}">
+            <span class="consignment-use-hint" data-stock-out-consignment-notice hidden></span>
+          </td>
+          <td>${escapeHtml(item.unit ?? "-")}</td>
+          <td><button type="button" class="button-link stock-out-line-remove" data-stock-out-remove>Remove</button></td>
+        </tr>
+      `);
+    }
+
+    stockOutQuantityInput.value = "1";
+    updateStockOutSourceOptions(item);
+    renderStockOutIssueList(stockOutLines, stockOutEmpty, stockOutSummary, currentData.inventory);
+  };
+
+  if (!addStockOutLineButton.dataset.bound) {
+    addStockOutLineButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      addStockOutLine();
+    });
+    addStockOutLineButton.dataset.bound = "true";
+  }
 
   if (stockOutForm && !stockOutForm.dataset.bound) {
     const setStockPickerOpen = (open) => {
@@ -3137,6 +4052,7 @@ function initDrawStockPage() {
       if (!selectedItem) return;
       stockOutItemSelect.value = selectedItem.id;
       updateStockPickerButton(stockPickerButton, selectedItem);
+      updateStockOutSourceOptions(selectedItem);
       renderStockPickerList(stockPickerList, currentData.inventory, selectedItem.id, stockPickerSearch?.value ?? "");
       setStockPickerOpen(false);
     });
@@ -3157,45 +4073,16 @@ function initDrawStockPage() {
       const currentData = loadData();
       const selectedItem = currentData.inventory.find((item) => item.id === stockOutItemSelect.value);
       updateStockPickerButton(stockPickerButton, selectedItem);
+      updateStockOutSourceOptions(selectedItem);
       renderStockPickerList(stockPickerList, currentData.inventory, stockOutItemSelect.value, stockPickerSearch?.value ?? "");
     });
 
-    addStockOutLineButton.addEventListener("click", () => {
-      const currentData = loadData();
-      const itemId = stockOutItemSelect.value;
-      const quantity = Number(stockOutQuantityInput.value || "0");
-      const item = currentData.inventory.find((entry) => entry.id === itemId);
-
-      if (!itemId || !item || quantity <= 0) {
-        showNotice(content, "Choose an item and enter a valid quantity before adding it to the issue list.");
+    stockOutForm.addEventListener("click", (event) => {
+      if (event.target.closest("#add-stock-out-line")) {
+        event.preventDefault();
+        addStockOutLine();
         return;
       }
-
-      const existingRow = stockOutLines.querySelector(`[data-item-id="${itemId}"]`);
-      if (existingRow) {
-        const quantityInput = existingRow.querySelector('input[name="issueQuantity"]');
-        quantityInput.value = Number(quantityInput.value || "0") + quantity;
-      } else {
-        stockOutLines.insertAdjacentHTML("beforeend", `
-          <tr data-stock-out-item-row data-item-id="${item.id}">
-            <td><strong>${escapeHtml(item.name)}</strong><br><span class="muted">${escapeHtml(item.brand ?? "Generic")} / ${escapeHtml(item.model ?? "Standard")}</span></td>
-            <td>${escapeHtml(item.sku)}</td>
-            <td data-stock-out-available>${renderStockBreakdownChips(item)}</td>
-            <td>
-              <input class="stock-out-qty-input" name="issueQuantity" type="number" min="1" step="1" value="${quantity}">
-              <span class="consignment-use-hint" data-stock-out-consignment-notice${renderConsignmentDrawNotice(item, quantity) ? "" : " hidden"}>${escapeHtml(renderConsignmentDrawNotice(item, quantity))}</span>
-            </td>
-            <td>${escapeHtml(item.unit ?? "-")}</td>
-            <td><button type="button" class="button-link stock-out-line-remove" data-stock-out-remove>Remove</button></td>
-          </tr>
-        `);
-      }
-
-      stockOutQuantityInput.value = "1";
-      renderStockOutIssueList(stockOutLines, stockOutEmpty, stockOutSummary, currentData.inventory);
-    });
-
-    stockOutForm.addEventListener("click", (event) => {
       const removeButton = event.target.closest("[data-stock-out-remove]");
       if (removeButton) {
         removeButton.closest("[data-stock-out-item-row]")?.remove();
@@ -3219,6 +4106,7 @@ function initDrawStockPage() {
       const lineItems = Array.from(stockOutForm.querySelectorAll("[data-stock-out-item-row]"))
         .map((line) => ({
           itemId: line.dataset.itemId ?? "",
+          issueSource: line.dataset.issueSource === "consignment" ? "consignment" : "own",
           quantity: Number(line.querySelector('input[name="issueQuantity"]')?.value ?? "0")
         }))
         .filter((line) => line.itemId && line.quantity > 0);
@@ -3228,19 +4116,24 @@ function initDrawStockPage() {
         return;
       }
 
-      const requestedByItem = lineItems.reduce((map, line) => {
-        map.set(line.itemId, (map.get(line.itemId) ?? 0) + line.quantity);
+      const requestedByItemAndSource = lineItems.reduce((map, line) => {
+        const key = `${line.itemId}|${line.issueSource}`;
+        map.set(key, (map.get(key) ?? 0) + line.quantity);
         return map;
       }, new Map());
 
-      for (const [itemId, requestedQty] of requestedByItem.entries()) {
+      for (const [key, requestedQty] of requestedByItemAndSource.entries()) {
+        const [itemId, issueSource] = key.split("|");
         const item = nextData.inventory.find((record) => record.id === itemId);
         if (!item) {
           showNotice(content, "One of the selected items could not be found.");
           return;
         }
-        if (requestedQty > item.quantity) {
-          showNotice(content, `Stock-out quantity for ${item.name} cannot be greater than the available quantity on hand.`);
+        const availableQuantity = issueSource === "consignment"
+          ? Number(item.consignmentQuantity ?? 0)
+          : Number(item.ownQuantity ?? item.quantity ?? 0);
+        if (requestedQty > availableQuantity) {
+          showNotice(content, `${item.name} only has ${availableQuantity} ${issueSource === "consignment" ? "consignment" : "LC Stock"} available.`);
           return;
         }
       }
@@ -3256,8 +4149,8 @@ function initDrawStockPage() {
           consignmentBaseline: Number(item.consignmentBaseline ?? item.consignmentQuantity ?? 0),
           consignmentToRestock: getConsignmentUsed(item)
         };
-        const ownIssued = Math.min(line.quantity, ownBefore);
-        const consignmentIssued = line.quantity - ownIssued;
+        const ownIssued = line.issueSource === "own" ? line.quantity : 0;
+        const consignmentIssued = line.issueSource === "consignment" ? line.quantity : 0;
         item.ownQuantity = ownBefore - ownIssued;
         item.consignmentQuantity = consignmentBefore - consignmentIssued;
         syncInventoryTotals(item);
@@ -3274,6 +4167,7 @@ function initDrawStockPage() {
         return {
           itemId: item.id,
           quantity: line.quantity,
+          issueSource: line.issueSource,
           ownQuantity: ownIssued,
           consignmentQuantity: consignmentIssued,
           balanceBefore,
@@ -3392,59 +4286,11 @@ function renderActivityDetailPage() {
         </div>
       </div>
       <div class="metric-grid activity-detail-metrics">
-        ${record.detailRows.map((row) => `
-          <div class="metric-card ${getActivityDetailMetricClass(row.label)}">
-            <strong>${escapeHtml(row.value)}</strong>
-            <span>${escapeHtml(row.label)}</span>
-          </div>
-        `).join("")}
+        ${record.detailRows.map((row) => renderActivityDetailMetricCard(row)).join("")}
       </div>
     </section>
 
-    <section class="panel activity-detail-items">
-      <div class="panel-header panel-header-tight">
-        <div>
-          <p class="eyebrow">Item Breakdown</p>
-          <h3>Detailed line items</h3>
-          <p class="section-copy">Review the item-level quantity and reference details for this activity record.</p>
-        </div>
-      </div>
-      <div class="table-wrap elevated-table">
-        <table>
-          <thead>
-            <tr>
-              <th>Brand</th>
-              <th>Model</th>
-              <th>Description</th>
-              <th>Stock Code</th>
-              <th>Total</th>
-              <th>LC Stock</th>
-              <th>Consignment</th>
-              <th>Unit</th>
-              <th>Location</th>
-              ${record.type === "stock-out" ? "<th>Balance After</th>" : ""}
-            </tr>
-          </thead>
-          <tbody>
-            ${record.itemRows.map((item) => `
-              <tr>
-                <td>${escapeHtml(item.brand)}</td>
-                <td>${escapeHtml(item.model)}</td>
-                <td><strong>${escapeHtml(item.name)}</strong></td>
-                <td>${escapeHtml(item.sku)}</td>
-                <td><span class="${getActivityQuantityClass(record.type)}">${escapeHtml(formatActivityDetailQuantity(item.quantity, record.type))}</span></td>
-                <td><span class="${getActivityQuantityClass(record.type)}">${escapeHtml(formatActivityDetailQuantity(item.ownQuantity ?? 0, record.type))}</span></td>
-                <td><span class="${getActivityQuantityClass(record.type)}">${escapeHtml(formatActivityDetailQuantity(item.consignmentQuantity ?? 0, record.type))}</span>${item.consignmentToRestock ? `<br><span class="muted">${escapeHtml(String(item.consignmentToRestock))} to restock</span>` : ""}</td>
-                <td>${escapeHtml(item.unit)}</td>
-                <td>${escapeHtml(item.location)}</td>
-                ${record.type === "stock-out" ? `<td>${escapeHtml(String(item.balanceAfter ?? 0))}</td>` : ""}
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      </div>
-    </section>
-    ${renderCorrectionSection(record)}
+    ${renderActivityDetailItemsSection(record)}
     ${record.balanceRows?.length ? `
       <section class="panel project-card activity-detail-balance">
         <div class="panel-header panel-header-tight">
@@ -3470,22 +4316,44 @@ function renderActivityDetailPage() {
         </div>
       </section>
     ` : ""}
+    ${renderCorrectionSection(record)}
+    ${renderActivityAuditTrailSection(record, data, type, id)}
   `;
 
   const correctionForm = container.querySelector("#correction-form");
   if (correctionForm && !correctionForm.dataset.bound) {
-    correctionForm.addEventListener("submit", (event) => {
+    const correctionGate = container.querySelector(".correction-gate");
+    const startCorrectionButton = container.querySelector("[data-start-correction]");
+    const cancelCorrectionButton = container.querySelector("[data-cancel-correction]");
+
+    startCorrectionButton?.addEventListener("click", () => {
+      correctionForm.hidden = false;
+      if (correctionGate) correctionGate.hidden = true;
+      correctionForm.querySelector("input, select, textarea")?.focus();
+    });
+
+    cancelCorrectionButton?.addEventListener("click", () => {
+      correctionForm.reset();
+      correctionForm.hidden = true;
+      if (correctionGate) correctionGate.hidden = false;
+      startCorrectionButton?.focus();
+    });
+
+    correctionForm.addEventListener("submit", async (event) => {
       event.preventDefault();
+      const confirmed = await showCorrectionConfirmationDialog(record, correctionForm);
+      if (!confirmed) return;
       const result = applyActivityCorrection(type, id, correctionForm);
       if (!result.ok) {
         showNotice(correctionForm, result.message);
         return;
       }
-      showToast("Correction saved and inventory balance updated.");
+      queueToast("Correction saved and audit record created.");
       window.location.href = `activity-detail.html?type=correction&id=${encodeURIComponent(result.correctionId)}`;
     });
     correctionForm.dataset.bound = "true";
   }
+
 }
 
 function resetPageScroll() {
@@ -3509,6 +4377,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initHomePage(currentUser);
   initAuthChrome(currentUser);
   applyRoleNavigation(currentUser);
+  showQueuedToast();
   if (["inventory", "activity-history", "activity-detail", "add-stock", "draw-stock"].includes(document.body.dataset.page)) {
     initSidebar();
   }
@@ -3542,4 +4411,3 @@ document.addEventListener("DOMContentLoaded", () => {
 
 window.addEventListener("load", resetPageScroll);
 window.addEventListener("pageshow", resetPageScroll);
-

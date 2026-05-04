@@ -124,6 +124,13 @@
                 Quantity
                 <input id="stock-out-quantity" type="number" min="1" step="1" value="1" required>
               </label>
+              <label>
+                Draw from
+                <select id="stock-out-source" required>
+                  <option value="own" selected>LC Stock</option>
+                  <option value="consignment">Consignment</option>
+                </select>
+              </label>
               <button type="button" class="button-link stock-out-add-button" id="add-stock-out-line">Add to Issue List</button>
             </div>
           </div>
@@ -135,6 +142,7 @@
                     <th>Description</th>
                     <th>Stock Code</th>
                     <th>Available</th>
+                    <th>Draw From</th>
                     <th>Qty to Issue</th>
                     <th>Unit</th>
                     <th>Action</th>
