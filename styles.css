@@ -2153,6 +2153,80 @@ body[data-page="draw-stock"] .stock-picker-button {
   text-align: center;
 }
 
+.receiver-picker-field {
+  position: relative;
+}
+
+.receiver-picker-field input {
+  padding-right: 42px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--navy) 50%),
+    linear-gradient(135deg, var(--navy) 50%, transparent 50%),
+    linear-gradient(180deg, rgba(23, 32, 51, 0.05), rgba(23, 32, 51, 0.02));
+  background-position:
+    calc(100% - 22px) 50%,
+    calc(100% - 16px) 50%,
+    100% 0;
+  background-size:
+    6px 6px,
+    6px 6px,
+    42px 100%;
+  background-repeat: no-repeat;
+}
+
+.receiver-picker-list {
+  position: absolute;
+  z-index: 70;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 6px;
+  max-height: 270px;
+  padding: 8px;
+  border: 1px solid rgba(22, 58, 99, 0.14);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 20px 48px rgba(16, 30, 46, 0.18);
+  overflow: auto;
+}
+
+.receiver-picker-list[hidden] {
+  display: none;
+}
+
+.receiver-picker-list.is-empty::after {
+  content: "No matching saved receiver. You can type a new receiver name.";
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(22, 58, 99, 0.05);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.receiver-picker-option {
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ink);
+  box-shadow: none;
+  text-align: left;
+  font-weight: 800;
+}
+
+.receiver-picker-option:hover,
+.receiver-picker-option:focus {
+  transform: none;
+  border-color: rgba(22, 58, 99, 0.12);
+  background: rgba(22, 58, 99, 0.06);
+  outline: none;
+}
+
 .stock-out-add-button,
 .stock-out-line-remove {
   white-space: nowrap;
@@ -3151,9 +3225,9 @@ tbody tr:hover {
   margin-bottom: 18px;
   padding: 13px 16px;
   border-radius: 18px;
-  background: linear-gradient(135deg, rgba(14, 127, 122, 0.14), rgba(22, 58, 99, 0.12));
-  color: var(--navy);
-  border: 1px solid rgba(22, 58, 99, 0.08);
+  background: linear-gradient(135deg, rgba(164, 74, 63, 0.16), rgba(164, 74, 63, 0.08));
+  color: #7b2f28;
+  border: 1px solid rgba(164, 74, 63, 0.22);
   font-weight: 700;
 }
 
@@ -3161,6 +3235,8 @@ tbody tr:hover {
   position: relative;
   overflow: hidden;
   background: linear-gradient(135deg, rgba(44, 122, 123, 0.18), rgba(22, 58, 99, 0.1));
+  color: var(--navy);
+  border-color: rgba(22, 58, 99, 0.08);
   animation: noticeSuccessIn 520ms ease both;
 }
 

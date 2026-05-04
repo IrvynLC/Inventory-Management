@@ -159,16 +159,16 @@
               Project Title
               <input name="projectTitle" type="text" placeholder="Project or work order title" required>
             </label>
-            <label>
+            <label class="receiver-picker-field">
               Received By
-              <select name="receivedBy" required>
-                <option value="">Select receiver</option>
-                <option value="Project Manager">Project Manager</option>
-                <option value="Site Supervisor">Site Supervisor</option>
-                <option value="Storekeeper">Storekeeper</option>
-                <option value="Technician">Technician</option>
-                <option value="Engineer">Engineer</option>
-              </select>
+              <input id="receiver-input" name="receivedBy" type="text" placeholder="Select or type receiver name" autocomplete="off" required aria-haspopup="listbox" aria-expanded="false">
+              <div class="receiver-picker-list" id="receiver-picker-list" role="listbox" hidden>
+                <button type="button" class="receiver-picker-option" data-receiver-option="Project Manager">Project Manager</button>
+                <button type="button" class="receiver-picker-option" data-receiver-option="Site Supervisor">Site Supervisor</button>
+                <button type="button" class="receiver-picker-option" data-receiver-option="Storekeeper">Storekeeper</button>
+                <button type="button" class="receiver-picker-option" data-receiver-option="Technician">Technician</button>
+                <button type="button" class="receiver-picker-option" data-receiver-option="Engineer">Engineer</button>
+              </div>
             </label>
           </div>
           <div class="form-actions">

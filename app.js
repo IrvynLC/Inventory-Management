@@ -3086,8 +3086,12 @@ function applyActivityCorrection(type, id, form) {
 
     const currentOwn = Number(item.ownQuantity ?? item.quantity ?? 0);
     const currentConsignment = Number(item.consignmentQuantity ?? 0);
-    if (currentOwn + ownDelta < 0) return { ok: false, message: `Correction would make LC Stock negative for ${item.name}.` };
-    if (currentConsignment + consignmentDelta < 0) return { ok: false, message: `Correction would make Consignment negative for ${item.name}.` };
+    if (currentOwn + ownDelta < 0) {
+      return { ok: false, message: `This correction cannot be saved because LC Stock would fall below 0 for ${item.name}. Check the corrected issued quantity.` };
+    }
+    if (currentConsignment + consignmentDelta < 0) {
+      return { ok: false, message: `This correction cannot be saved because Consignment Stock would fall below 0 for ${item.name}. Check the corrected issued quantity.` };
+    }
 
     item.ownQuantity = currentOwn + ownDelta;
     item.consignmentQuantity = currentConsignment + consignmentDelta;
@@ -4150,6 +4154,8 @@ function initDrawStockPage() {
   const stockPickerPopover = document.querySelector("#stock-picker-popover");
   const stockPickerSearch = document.querySelector("#stock-picker-search");
   const stockPickerList = document.querySelector("#stock-picker-list");
+  const receiverInput = document.querySelector("#receiver-input");
+  const receiverPickerList = document.querySelector("#receiver-picker-list");
   const addStockOutLineButton = document.querySelector("#add-stock-out-line");
   const stockOutForm = document.querySelector("#stock-out-form");
   if (!content || !stockOutItemSelect || !stockOutQuantityInput || !stockOutLines || !stockOutEmpty || !stockOutSummary || !addStockOutLineButton || !stockOutForm) {
@@ -4311,6 +4317,54 @@ function initDrawStockPage() {
       updateStockPickerButton(stockPickerButton, selectedItem);
       updateStockOutSourceOptions(selectedItem);
       renderStockPickerList(stockPickerList, currentData.inventory, stockOutItemSelect.value, stockPickerSearch?.value ?? "");
+    });
+
+    const setReceiverPickerOpen = (open) => {
+      if (!receiverInput || !receiverPickerList) return;
+      receiverPickerList.hidden = !open;
+      receiverInput.setAttribute("aria-expanded", String(open));
+    };
+
+    const filterReceiverOptions = () => {
+      if (!receiverInput || !receiverPickerList) return;
+      const searchTerm = receiverInput.value.trim().toLowerCase();
+      let visibleCount = 0;
+      receiverPickerList.querySelectorAll("[data-receiver-option]").forEach((option) => {
+        const isVisible = !searchTerm || option.dataset.receiverOption.toLowerCase().includes(searchTerm);
+        option.hidden = !isVisible;
+        if (isVisible) visibleCount += 1;
+      });
+      receiverPickerList.classList.toggle("is-empty", visibleCount === 0);
+    };
+
+    receiverInput?.addEventListener("focus", () => {
+      filterReceiverOptions();
+      setReceiverPickerOpen(true);
+    });
+
+    receiverInput?.addEventListener("input", () => {
+      filterReceiverOptions();
+      setReceiverPickerOpen(true);
+    });
+
+    receiverInput?.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        setReceiverPickerOpen(false);
+      }
+    });
+
+    receiverPickerList?.addEventListener("click", (event) => {
+      const option = event.target.closest("[data-receiver-option]");
+      if (!option || !receiverInput) return;
+      receiverInput.value = option.dataset.receiverOption;
+      receiverInput.dispatchEvent(new Event("input", { bubbles: true }));
+      setReceiverPickerOpen(false);
+      receiverInput.focus();
+    });
+
+    document.addEventListener("click", (event) => {
+      if (event.target.closest(".receiver-picker-field")) return;
+      setReceiverPickerOpen(false);
     });
 
     stockOutForm.addEventListener("click", (event) => {
