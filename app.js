@@ -1,12 +1,9 @@
-const STORAGE_KEY = "ims-company-data-v2";
+const STORAGE_KEY = "ims-company-data-v3";
+const LEGACY_DATA_STORAGE_KEYS = ["ims-company-data-v2"];
 const INVENTORY_PAGE_SIZE = 8;
 const USER_STORAGE_KEY = "ims-users-v4";
 const SESSION_STORAGE_KEY = "ims-session-user-id-v2";
 const PROTECTED_PAGES = new Set(["home", "inventory", "activity-history", "activity-detail", "add-stock", "draw-stock", "create-stock", "handover"]);
-const DEFAULT_CONSIGNMENT_BY_SKU = {
-  "BOOTH CLEAR": 5
-};
-
 const defaultUsers = [
   {
     id: "user-fenny",
@@ -52,123 +49,20 @@ const defaultUsers = [
   }
 ];
 
-const defaultInventorySeed = [
-  ["Actel", "Boot", "UTP RJ45 RUBBER BOOT (FOR CAT6A UTP CABLE) WHITE", "FTP RJ45 WHITE", "PCS", 69, "S1_R2"],
-  ["INFINITE", "Boot", "FTP CAT5E CONNECTOR SHIELDED C/W RUBBER BOOT BLACK COLOUR", "IN64491", "PCS", 2000, "I_RACK 1"],
-  ["OEM", "Boot", "RJ45 CLEAR BOOT 6MM OPENING (CAT6/TRANSPARENT)", "BT-C60D", "PCS", 920, "S1_R2"],
-  ["OEM", "Boot", "RJ45 BOOT CLEAR CAT6 (HOLE OPENING 6MM)", "BOOTH CLEAR", "PCS", 9, "S1_R2"],
-  ["OEM", "Boot", "RJ45 BOOT BLUE COLOUR CAT6A (HOLE OPENING 7MM)", "BOOTH BLUE", "PCS", 1425, "S1_R2"],
-  ["INFINITE", "Plug", "RJ45 SHIELD CAT6A PLUG", "IN64491", "PCS", 123, "S1_R2"],
-  ["Nexans", "Plug", "Field Terminable Plug Category 6A", "N490.001", "PCS", 2, "S1_R2"],
-  ["OEM", "Plug", "CAT6 UTP MODULAR PLUG (50U)", "MP-UC6-501", "PCS", 760, "S1_R2"],
-  ["OEM", "Plug", "STP CAT6A PLUG", "STP CAT6A PLUG", "PCS", 3744, "S1_R2"],
-  ["ALANTEK", "Jack", "CAT 6 UNSHIELDED 180DEG QUICK CRIMP KEYSTONE JACK, WHITE", "302-2QX618-WHAB", "PCS", 7, "S1_R2"],
-  ["Commscope", "Jack", "JCK, SL110, RJ45, CAT6, BLK SL SERIES RJ45 JACK, CAT6", "AMP_1375055-2", "PC", 23, "S1_R2"],
-  ["Commscope", "Jack", "SL SERIES RJ45 JACK, CAT6 568A/B, LT. ALMOND (WHITE)", "CN1933748-1", "PC", 2, "S1_R2"],
-  ["Commscope", "Jack", "JCK: NETCONNECT SLX SERIES MODULAR JACK CAT6A SHIELDED 4 PAIR WITHOUT DUST COVER GREY", "CSP_2153449-4", "PC", 36, "S1_R2"],
-  ["Datwyler", "Jack", "Datwyler Keystone Modular KU Cat 6 de-embedded black RJ45 unshielded", "418081", "PCS", 109, "S1_R4"],
-  ["Honeywell", "Jack", "Angular RJ45 Jack Adaptor", "RX5456AWHI", "PC", 12, "S1_R2"],
-  ["INFINITE", "Jack", "CAT6 KEYSTONE JACK NON SHUTTER WHITE", "IN6-401-WH", "PCS", 350, "S1_R2"],
-  ["INFINITE", "Jack", "F/UTP CAT6A JACK (IN6A-431)", "IN6A-431", "PCS", 463, "S1_R2 & S4_R4"],
-  ["Nexans", "Jack", "LANmark-6 Evo Snap-In Connector Cat6 Screened", "N420.666", "PCS", 19, "S1_R2"],
-  ["Nexans", "Jack", "Evo Snap-In Connector Cat6A 500MHz", "N420.66A", "PCS", 26, "S1_R2"],
-  ["Panduit", "Jack", "NETKEY 10GIG 8 POSITION, 8 WIRE PUNCHDOWN JACK MODULE CAT 6A", "NK6X88MBU", "PC", 43, "S1_R2"],
-  ["SIEMON", "Jack", "OUTLET, MAX, UTP, CAT6, RJ45, FLT, WHITE P-DWN, T568A/B", "MX6-F02B", "PCS", 8, "S3_R2"],
-  ["SIEMON", "Jack", "JCK: SIEMON COPPER OUTLET MAX SHIELDED CAT6A RJ45 HYBRID TOOL-LESS T568A/B BULK PACK WHITE - NEW", "Z6A-S02", "PCS", 24, "S1_R2"],
-  ["SIEMON", "Jack", "JCK: Copper Outlet Ultramax UTP Cat6 RJ45 Hybrid Punch Down T568A/5 with Door white", "SIE_U6-H02DS", "PCS", 364, "S1_R2"],
-  ["VELCO", "Jack", "VELCO CAT6A SHIELDED RJ45 MODULAR JACK 180C TOOL-LESS METALLIC SILVER", "VCU-6A-MJ-S-SS", "PCS", 8, "S1_R2"],
-  ["ALANTEK", "Face Plate", "1-PORT UK STYLE SHUTTERED FACE PLATE, WHITE", "302-203221-SHWH", "PCS", 3, "S1_R2"],
-  ["Commscope", "Face Plate", "FACEPLATE KIT DECORATOR 1PORT, BS, WHITE", "CN1859167-1", "PC", 7, "S1_R2"],
-  ["Commscope", "Face Plate", "FP: COMMSCOPE 1 PORT ANGLED SHUTTERED FP KIT BBS WHITE (FOR Cat6 & Cat6A)", "CSP_760245679", "PC", 46, "S1_R2"],
-  ["Commscope", "Face Plate", "FP KIT CAT 6, BS, 2 PORT, ANGLED SHUTTERED (BLACK) (FOR Cat6 & Cat6A)", "760245680", "PC", 18, "S1_R2"],
-  ["Honeywell", "Face Plate", "1G 1M EURO FRONT PLATE", "R5450WHI", "PC", 12, "S1_R2"],
-  ["INFINITE", "Face Plate", "FACEPLATE 86 x 86MM 1 PORT", "FP-101-WH", "PCS", 357, "S1_R2 & S3_R4"],
-  ["INFINITE", "Face Plate", "FACEPLATE 86 x 86MM 2 PORT", "FP-102-WH", "PCS", 19, "S1_R2"],
-  ["INFINITE", "Face Plate", "RJ45 FACEPLATE, SINGLE PORT, ANGLED", "FP-301", "PCS", 145, "S1_R2"],
-  ["INFINITE", "Face Plate", "RJ45 FACEPLATE, SINGLE PORT, ANGLED", "FP-301-A", "PCS", 100, "S3_R4"],
-  ["INFINITE", "Face Plate", "FACE PLATE 86 x 86MM 2 PORT ANGLED", "FP-302", "PCS", 187, "S1_R2 & S3_R3"],
-  ["Nexans", "Face Plate", "UK Angled Wall Outlet Kit 1 Snap-In WH", "N800.511", "PCS", 21, "S1_R2"],
-  ["Nexans", "Face Plate", "LANMARK-EU STYLE ANGLED 45 X 45 MODULE 2 SNAP-IN WHITE (NEW) #0700516N", "N800.512", "PCS", 10, "S1_Floor"],
-  ["Panduit", "Face Plate", "NETKEY 2-POSITION SINGLE GANG K SLOPED SHUTTERED FACEPLATE KIT", "NKUKS2SAW", "PC", 3, "S1_R2"],
-  ["SIEMON", "Face Plate", "FPLT, MAX, BRTSH, SNGL GNG, 1 OPEN, MX WHT", "M-BFP-S-01-02", "PCS", 36, "S1_R2"],
-  ["SIEMON", "Face Plate", "FP: FACEPLATE MAX BRITISH SINGLE GANG 2 OPENINGS MX WHITE - NEW", "MX-BFP-S-02-02", "PCS", 15, "S1_R2"],
-  ["SIEMON", "Face Plate", "FPLT, DBL LYR, BRTSH, SNGL GNG, 1 OPENS, MX, WHT", "SIE_MX-BFPL-01-02", "PCS", 50, "S1_Floor"],
-  ["SIEMON", "Face Plate", "FPLT, DBL LYR, BRTSH, SNGL GNG, 2 OPENS, MX, WHT", "SIE_MX-BFPL-02-02", "PCS", 107, "S1_Floor"],
-  ["VELCO", "Face Plate", "VELCO FACE PLACE ANGLE 86x86MM 1PORT WHITE (+ Replacement Screw =20 pcs)", "VCF-FP-BS-AN-WH-1P", "PCS", 4, "S1_R2"],
-  ["VELCO", "Face Plate", "VELCO FACE PLACE ANGLE 86x86MM 2PORT WHITE (+ Replacement Screw =20 pcs)", "VCF-FP-BS-AN-WH-2P", "PCS", 5, "S1_R2"],
-  ["ALANTEK", "Patch Cord", "CAT 6 UTP 24AWG PATCH CORD, MOLDED BOOT, PVC, 5FT, WHITE", "302-4MU056-FTWH", "PCS", 3, "S1_R3"],
-  ["ALANTEK", "Patch Cord", "CAT 6 UTP 24AWG PATCH CORD, MOLDED BOOT, PVC, 7FT, YELLOW", "302-4MU076-FTYL", "PCS", 4, "S1_R3"],
-  ["AMP", "Patch Cord", "CAT.6 FTP PATCH CORD WHITE - 3M", "AMP PATCH CORD 3M", "PC", 33, "S1_R4"],
-  ["AMP", "Patch Cord", "CAT.6 FTP PATCH CORD WHITE - 5M", "AMP PATCH CORD 5M", "PC", 40, "S1_R4"],
-  ["Commscope", "Patch Cord", "CAT6, WHITE, 10 FEET (3M)", "CSP_1-1859250-0", "PC", 6, "S1_R3"],
-  ["Commscope", "Patch Cord", "NPC CAT6, UTP, CM, WT, PATCH CORD 3M (Red)", "NPC06UVDB-RD010F", "PC", 26, "S1_R3"],
-  ["Commscope", "Patch Cord", "NPC CAT6, UTP, CM, WT, PATCH CORD 3M (White)", "NPC06UVDB-WT010F", "PC", 14, "S1_R4"],
-  ["Commscope", "Patch Cord", "PC: NETCONNECT NPC CAT6A S/FTP RJ45 LSZH PATCH CORD WHITE 5.0MT", "CSP_NPC6ASZDB-WT005M", "PC", 5, "S1_R4"],
-  ["Commscope", "Patch Cord", "PC: NETCONNECT NPC CAT6A S/FTP RJ45 LSZH PATCH CORD WHITE 3.0MT", "CSP_NPC6ASZDB-WT003M", "PC", 30, "S1_R4"],
-  ["Commscope", "Patch Cord", "PC: NETCONNECT NPC CAT6A S/FTP RJ45 LSZH PATCH CORD WHITE 2.0MT", "CSP_NPC6ASZDB-WT002M", "PC", 17, "S1_R4"],
-  ["Datwyler", "Patch Cord", "Datwyler patch cord Cat 6A S/FTP FRNC/LSOH orange 3m", "359014", "PCS", 1, "S1_R4"],
-  ["Draka", "Patch Cord", "SFTP CAT6A DBOOT PATCH CORD LSHE 26AWG 5M WHITE", "PC8420WH-5", "PCS", 111, "S1_Floor"],
-  ["INFINITE", "Patch Cord", "CAT6 UTP PATCH CORD PVC CABLE BLUE 3M", "IN6-303-BL", "PCS", 156, "S1_R3"],
-  ["INFINITE", "Patch Cord", "CAT6 UTP PATCH CORD PVC CABLE BLUE 3M", "IN6-303-BL-S", "PCS", 32, "S1_R3"],
-  ["INFINITE", "Patch Cord", "CAT6 UTP PATCH CORD PVC CABLE GREY 3M", "IN6-303-GR", "PCS", 6, "S1_R3"],
-  ["Nexans", "Patch Cord", "LANMARK6A 10G ULTIM SCREENED CAT6A PATCH CORD LSZH 3M, ORANGE (FOR LAN ROOM)", "N11A.U1F0300K", "PCS", 34, "S1_R3"],
-  ["Nexans", "Patch Cord", "LANmark6A 10G Ultim Screened CAT6A Patchcord LSZH 5m, Orange", "N11A.U1F0500K", "PCS", 6, "S1_R3"],
-  ["Nexans", "Patch Cord", "LANmark6A 10G Ultim Screened CAT6A Patchcord LSZH 20m, Orange", "N11A.U1F2000K", "PCS", 2, "S1_R3"],
-  ["Panduit", "Patch Cord", "Netkey UTP Copper Patch Cord, category 6A, 2m, off white", "NKU6APC2M", "PC", 6, "S1_R3"],
-  ["Panduit", "Patch Cord", "CAT6A 26AWG S/FTP SHIELDED PATCH CORD, INTERNATIONAL GRAY, LSZH. 2M", "S6XPC2MIG", "PC", 5, "S3_R3"],
-  ["SIEMON", "Patch Cord", "PC-UTP: COPPER PATCH CORD RJ45 CAT6 UTP T568A/B STRANDED CM/LSOH-1 CLEAR BOOT WHITE 2.0 MT - NEW", "SIE_MC6-02M-02-28", "PCS", 316, "S1_R1/R4"],
-  ["SIEMON", "Patch Cord", "PC-UTP: COPPER PATCH CORD RJ45 CAT6 UTP T568A/B STRANDED CM/LSOH-1 CLEAR BOOT WHITE 3.0 MT - NEW", "SIE_MC6-03M-02-28", "PCS", 124, "S1_R4"],
-  ["VELCO", "Patch Cord", "VELCO CAT6A SHIELDED RJ45 PATCH CORD LSZH ORANGE RAL2003, 2M", "VCU-6A-PC-S-LSF-OR-2M", "PCS", 6, "S1_R3"],
-  ["VELCO", "Patch Cord", "VELCO CAT6A SHIELDED RJ45 PATCH CORD LSZH ORANGE RAL2003, 3M", "VCU-6A-PC-S-LSF-OR-3M", "PCS", 17, "S1_R3"],
-  ["INFINITE", "Patch Cord Fibre", "LC-SC UPC, SM SIMPLEX PATCHCORD 15M, G657 PVC 2.0MM SHORT BOOT", "INF3311-LUSUV20150", "PCS", 4, "S2_R3"],
-  ["INFINITE", "Patch Cord Fibre", "OM4 LSZH LC/UPC-LC/UPC DUPLEX 3M PATCH CORD MULTIMODE", "INF3321-LULUL40030", "PCS", 4, "S2_R3"],
-  ["INFINITE", "Patch Cord Fibre", "OM4 LSZH LC/UPC-LC/UPC DUPLEX 5M PATCH CORD MULTIMODE", "INF3321-LULUL40050", "PCS", 89, "S2_R3"],
-  ["INFINITE", "Patch Cord Fibre", "OM4 LSZH LC/UPC-LC/UPC DUPLEX 10M PATCH CORD MULTIMODE", "INF3321-LULUL40100", "PCS", 3, "S2_R3"],
-  ["INFINITE", "Patch Cord Fibre", "OM4 LSZH LC/UPC-LC/UPC DUPLEX 15M FIBER PATCH CORD", "INF3321-LULUL40150", "PCS", 15, "S2_R3"],
-  ["INFINITE", "Patch Cord Fibre", "LU/UPC-LC/UPC, SM, DUPLEX, LSZH FIBER PATCH CORD, 3M", "INF3321-LULULD0030", "PCS", 31, "S2_R3"],
-  ["INFINITE", "Patch Cord Fibre", "LC/UPC-LC/UPC, SM, G652D, DUPLEX, LSZH FIBER PATCH CORD, 5M", "INF3321-LULULD0050", "PCS", 1, "S2_R3"],
-  ["INFINITE", "Patch Cord Fibre", "LC/UPC-LC/UPC, G652D, DUPLEX, LSZH FIBER PATCH CORD, 15M", "INF3321-LULULD0150", "PCS", 1, "S2_R3"],
-  ["INFINITE", "Patch Cord Fibre", "FO PATCH CORD SC/UPC-LC/UPC OM3 50/125UM PLUS CORNING D SIZE 15M", "INF3321-LUSUL40150", "PCS", 2, "S2_R3"],
-  ["OEM", "Patch Cord Fibre", "LC-LC/UPC Patch Cord 2.0mm Duplex SM, LSZH, 3M", "LC-LC/UPC 3M", "PCS", 46, "S1_R3"],
-  ["OEM", "Patch Cord Fibre", "LC-LC/UPC Patch Cord 2.0mm Duplex SM, LSZH, 5M", "LC-LC/UPC 5M", "PCS", 16, "S1_R3"],
-  ["OEM", "Patch Cord Fibre", "LC-LC/UPC Patch Cord 2.0mm Duplex SM, LSZH, 15M", "LC-LC/UPC 15M", "PCS", 31, "S1_R3"],
-  ["OEM", "Patch Cord Fibre", "IN6-DX-OM3 3M MULTIMODE", "IN6-DX-OM3_3M", "PCS", 1, "S2_R2"],
-  ["OEM", "Patch Cord Fibre", "IN6-DX-OM4 5M MULTIMODE", "IN6-DX-OM4_5M", "PCS", 2, "S2_R2"],
-  ["OEM", "Patch Cord Fibre", "LC-LC DX SM 3M SINGLEMODE", "LC-LC DX SM 3M", "PCS", 1, "S2_R2"],
-  ["OEM", "Patch Cord Fibre", "LC-LC DX SM 5M SINGLEMODE", "LC-LC DX SM 5M", "PCS", 4, "S2_R2"],
-  ["OEM", "Patch Cord Fibre", "LC-SC DX SM 5M SINGLEMODE", "LC-SC DX SM 5M", "PCS", 1, "S2_R2"]
-];
-
-function getDefaultConsignmentQuantity(sku) {
-  return DEFAULT_CONSIGNMENT_BY_SKU[String(sku ?? "").trim().toUpperCase()] ?? 0;
-}
-
-function createSeedInventoryRecord([brand, model, name, sku, unit, quantity, location]) {
-  const consignmentQuantity = getDefaultConsignmentQuantity(sku);
-  return {
-    id: crypto.randomUUID(),
-    brand,
-    model,
-    name,
-    sku,
-    unit,
-    quantity: quantity + consignmentQuantity,
-    ownQuantity: quantity,
-    consignmentQuantity,
-    consignmentBaseline: consignmentQuantity,
-    unitCost: 0,
-    reorderLevel: 0,
-    location,
-    createdAt: new Date().toISOString()
-  };
-}
-
 const defaultData = {
-  inventory: defaultInventorySeed.map((item) => createSeedInventoryRecord(item)),
+  inventory: [],
   adjustments: [],
   stockOuts: [],
   corrections: []
 };
+
+function clearLegacyDataStorage() {
+  LEGACY_DATA_STORAGE_KEYS.forEach((key) => {
+    if (key !== STORAGE_KEY) {
+      localStorage.removeItem(key);
+    }
+  });
+}
 
 function cloneDefaultUsers() {
   return defaultUsers.map((user) => ({ ...user }));
@@ -244,6 +138,32 @@ function canAccessPage(page, user) {
   }
 
   return true;
+}
+
+function getCorrectionPermissionLabel(correctionKind) {
+  if (["create", "stock-in"].includes(correctionKind)) {
+    return "Admin or Administrative";
+  }
+  if (correctionKind === "stock-out") {
+    return "Engineer or Administrative";
+  }
+  return "Administrative";
+}
+
+function canCorrectActivityKind(correctionKind, user) {
+  if (!user) return false;
+
+  const role = normalizeRole(user.role);
+  if (role === "administrative") return true;
+  if (["create", "stock-in"].includes(correctionKind)) return role === "admin";
+  if (correctionKind === "stock-out") return role === "engineer";
+  return false;
+}
+
+function canCorrectActivityRecord(record, user) {
+  const correctionKind = getCorrectableRecordKind(record);
+  return ["create", "stock-in", "stock-out"].includes(correctionKind)
+    && canCorrectActivityKind(correctionKind, user);
 }
 
 function canAccessHref(href, user) {
@@ -697,6 +617,7 @@ function upgradeLegacyInventory(inventory) {
 }
 
 function loadData() {
+  clearLegacyDataStorage();
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) {
     const normalizedDefaultData = {
@@ -1015,7 +936,7 @@ function showCreateStockConfirmationDialog(item) {
               <strong>${escapeHtml(item.brand)}</strong>
             </div>
             <div class="create-review-field">
-              <span>Model</span>
+              <span>Category</span>
               <strong>${escapeHtml(item.model)}</strong>
             </div>
           </div>
@@ -1085,7 +1006,7 @@ function getCorrectionPreviewItems(record, form) {
   if (correctionKind === "create") {
     const labels = [
       ["brand", "Brand", "correctBrand-0"],
-      ["model", "Model", "correctModel-0"],
+      ["model", "Category", "correctCategory-0"],
       ["name", "Description", "correctName-0"],
       ["sku", "Stock Code", "correctSku-0"],
       ["unit", "Unit", "correctUnit-0"],
@@ -1315,7 +1236,7 @@ function getActivityDetailSectionCopy(record) {
 function renderCreateCorrectionChanges(item) {
   const labels = {
     brand: "Brand",
-    model: "Model",
+    model: "Category",
     name: "Description",
     sku: "Stock Code",
     unit: "Unit",
@@ -1386,7 +1307,7 @@ function renderMovementCorrectionTable(record, movementSourceKind, showOwnMoveme
       <thead>
         <tr>
           <th>Brand</th>
-          <th>Model</th>
+          <th>Category</th>
           <th>Description</th>
           <th>Stock Code</th>
           <th>Adjustment</th>
@@ -1459,7 +1380,7 @@ function renderActivityDetailItemsSection(record) {
           <thead>
             <tr>
               <th>Brand</th>
-              <th>Model</th>
+              <th>Category</th>
               <th>Description</th>
               <th>Stock Code</th>
               <th>Unit</th>
@@ -1487,7 +1408,7 @@ function renderActivityDetailItemsSection(record) {
           <thead>
             <tr>
               <th>Brand</th>
-              <th>Model</th>
+              <th>Category</th>
               <th>Description</th>
               <th>Stock Code</th>
               ${showOwnMovementColumn ? `<th>${isMovementCorrection ? "LC Adjustment" : "LC Stock"}</th>` : ""}
@@ -1637,6 +1558,8 @@ function getActivityQuantityClass(type, quantity = 0) {
 function renderCorrectionSection(record) {
   const correctionKind = record.type === "correction" ? record.rootSourceType : record.type;
   if (!["create", "stock-in", "stock-out"].includes(correctionKind)) return "";
+  const currentUser = getCurrentUser();
+  const canCorrect = canCorrectActivityRecord(record, currentUser);
   if (record.hasCorrection) {
     return `
       <section class="panel project-card correction-panel">
@@ -1654,6 +1577,19 @@ function renderCorrectionSection(record) {
   const isStockIn = correctionKind === "stock-in";
   const isCreate = correctionKind === "create";
   const recordLabel = isCreate ? "stock creation" : isStockIn ? "stock-in" : "stock-out";
+  if (!canCorrect) {
+    return `
+      <section class="panel project-card correction-panel">
+        <div class="panel-header panel-header-tight">
+          <div>
+            <p class="eyebrow">Correction</p>
+            <h3>Correction access restricted</h3>
+            <p class="section-copy">This ${escapeHtml(recordLabel)} record can only be corrected by ${escapeHtml(getCorrectionPermissionLabel(correctionKind))} users. You are signed in as ${escapeHtml(getUserRole(currentUser))}.</p>
+          </div>
+        </div>
+      </section>
+    `;
+  }
   return `
     <section class="panel project-card correction-panel">
       <div class="panel-header panel-header-tight correction-gate">
@@ -1681,8 +1617,8 @@ function renderCorrectionSection(record) {
                 <input name="correctBrand-${index}" type="text" value="${escapeHtml(item.brand ?? "")}" placeholder="CommScope" required>
               </label>
               <label>
-                Model
-                <input name="correctModel-${index}" type="text" value="${escapeHtml(item.model ?? "")}" placeholder="Cat6 305M" required>
+                Category
+                <input name="correctCategory-${index}" type="text" value="${escapeHtml(item.model ?? "")}" placeholder="Cable / Patch Cord" required>
               </label>
               <label>
                 Description
@@ -2595,7 +2531,7 @@ function getActivityDetailRecord(type, id, data) {
       summary: item.name ?? item.sku ?? "Inventory item",
       detailRows: [
         { label: "Brand", value: item.brand ?? "Generic" },
-        { label: "Model", value: item.model ?? "Standard" },
+        { label: "Category", value: item.model ?? "Standard" },
         { label: "Stock Code", value: item.sku ?? "-" },
         { label: "Unit", value: item.unit ?? "-" },
         { label: "Location", value: item.location ?? "Main Store" }
@@ -2923,7 +2859,7 @@ function buildHandoverDocumentMarkup(record, items) {
           <tr>
             <th>No.</th>
             <th>Brand</th>
-            <th>Model</th>
+            <th>Category</th>
             <th>Description</th>
             <th>Stock Code</th>
             <th>Total Qty</th>
@@ -3022,6 +2958,9 @@ function applyActivityCorrection(type, id, form) {
   const reason = form.querySelector("#correction-reason")?.value.trim() ?? "";
   const correctionKind = getCorrectableRecordKind(record);
   if (!record || !["create", "stock-in", "stock-out"].includes(correctionKind)) return { ok: false, message: "This activity record cannot be corrected." };
+  if (!canCorrectActivityRecord(record, currentUser)) {
+    return { ok: false, message: `You do not have permission to correct this ${correctionKind === "create" ? "stock creation" : correctionKind} record. Required role: ${getCorrectionPermissionLabel(correctionKind)}.` };
+  }
   if (!reason) return { ok: false, message: "Enter a correction reason before saving." };
   if ((nextData.corrections ?? []).some((entry) => entry.sourceType === type && entry.sourceId === id)) {
     return { ok: false, message: "This record already has a correction. Review the correction record before applying another change." };
@@ -3037,7 +2976,7 @@ function applyActivityCorrection(type, id, form) {
 
     const nextValues = {
       brand: String(form.elements["correctBrand-0"]?.value ?? "").trim().replace(/\s+/g, " "),
-      model: String(form.elements["correctModel-0"]?.value ?? "").trim().replace(/\s+/g, " "),
+      model: String(form.elements["correctCategory-0"]?.value ?? "").trim().replace(/\s+/g, " "),
       name: String(form.elements["correctName-0"]?.value ?? "").trim().replace(/\s+/g, " "),
       sku: String(form.elements["correctSku-0"]?.value ?? "").trim().replace(/\s+/g, " "),
       unit: String(form.elements["correctUnit-0"]?.value ?? "").trim().replace(/\s+/g, " "),
@@ -3380,7 +3319,7 @@ function renderInventoryPage() {
   const brands = getUniqueInventoryValues(data.inventory, "brand");
   const models = getUniqueInventoryValues(data.inventory, "model");
   const activeBrand = getValidFilterValue(brandFilter?.value, localStorage.getItem(brandKey), brands);
-  const activeModel = getValidFilterValue(modelFilter?.value, localStorage.getItem(modelKey), models);
+  const activeCategory = getValidFilterValue(modelFilter?.value, localStorage.getItem(modelKey), models);
   const rawStatusFilter = localStorage.getItem(filterKey) ?? statusFilter?.value ?? "all";
   const activeFilter = ["all", "low-stock", "in-stock", "out-of-stock"].includes(rawStatusFilter) ? rawStatusFilter : "all";
   const selectedPageSize = Number(localStorage.getItem(pageSizeKey) ?? pageSizeSelect?.value ?? String(INVENTORY_PAGE_SIZE));
@@ -3397,7 +3336,7 @@ function renderInventoryPage() {
   }
 
   populateFilterSelect(brandFilter, brands, activeBrand, "All brands");
-  populateFilterSelect(modelFilter, models, activeModel, "All categories");
+  populateFilterSelect(modelFilter, models, activeCategory, "All categories");
 
   if (statusFilter && statusFilter.value !== activeFilter) {
     statusFilter.value = activeFilter;
@@ -3428,7 +3367,7 @@ function renderInventoryPage() {
 
     if (!matchesSearch) return false;
     if (activeBrand !== "all" && item.brand !== activeBrand) return false;
-    if (activeModel !== "all" && item.model !== activeModel) return false;
+    if (activeCategory !== "all" && item.model !== activeCategory) return false;
     if (activeFilter === "low-stock") return item.quantity <= (item.reorderLevel ?? 0);
     if (activeFilter === "in-stock") return item.quantity > 0;
     if (activeFilter === "out-of-stock") return item.quantity <= 0;
@@ -3442,7 +3381,7 @@ function renderInventoryPage() {
   const pageItems = filteredInventory.slice(startIndex, endIndex);
   const hasActiveFilters = Boolean(searchTerm)
     || activeBrand !== "all"
-    || activeModel !== "all"
+    || activeCategory !== "all"
     || activeFilter !== "all";
 
   paginationSummary.textContent = filteredInventory.length
@@ -3825,48 +3764,48 @@ function initCreateStockPage() {
   const content = document.querySelector(".main-shell");
   const inventoryForm = document.querySelector("#inventory-form");
   const modelSelect = document.querySelector("#create-model-select");
-  const newModelField = document.querySelector("#create-new-model-field");
-  const newModelInput = document.querySelector("#create-model-new");
-  if (!content || !inventoryForm || !modelSelect || !newModelField || !newModelInput) return;
+  const newCategoryField = document.querySelector("#create-new-model-field");
+  const newCategoryInput = document.querySelector("#create-model-new");
+  if (!content || !inventoryForm || !modelSelect || !newCategoryField || !newCategoryInput) return;
 
-  const newModelValue = "__new_model__";
-  const getModels = () => getUniqueInventoryValues(loadData().inventory, "model");
-  const renderModelOptions = (selectedValue = "") => {
-    const models = getModels();
-    const canRestoreSelectedValue = selectedValue && (selectedValue === newModelValue || models.includes(selectedValue));
+  const newCategoryValue = "__new_category__";
+  const getCategories = () => getUniqueInventoryValues(loadData().inventory, "model");
+  const renderCategoryOptions = (selectedValue = "") => {
+    const categories = getCategories();
+    const canRestoreSelectedValue = selectedValue && (selectedValue === newCategoryValue || categories.includes(selectedValue));
     const safeSelectedValue = canRestoreSelectedValue ? selectedValue : "";
     modelSelect.innerHTML = [
-      `<option value="" disabled ${safeSelectedValue ? "" : "selected"}>Select a model</option>`,
-      ...models.map((model) => `<option value="${escapeHtml(model)}" ${model === safeSelectedValue ? "selected" : ""}>${escapeHtml(model)}</option>`),
-      `<option value="${newModelValue}" ${safeSelectedValue === newModelValue ? "selected" : ""}>Model not listed</option>`
+      `<option value="" disabled ${safeSelectedValue ? "" : "selected"}>Select a category</option>`,
+      ...categories.map((category) => `<option value="${escapeHtml(category)}" ${category === safeSelectedValue ? "selected" : ""}>${escapeHtml(category)}</option>`),
+      `<option value="${newCategoryValue}" ${safeSelectedValue === newCategoryValue ? "selected" : ""}>Category not listed</option>`
     ].join("");
     if (safeSelectedValue) {
       modelSelect.value = safeSelectedValue;
     }
     syncCustomSelect(modelSelect);
   };
-  const updateNewModelState = () => {
-    const isAddingNewModel = modelSelect.value === newModelValue;
-    newModelField.hidden = !isAddingNewModel;
-    newModelInput.required = isAddingNewModel;
-    newModelInput.disabled = !isAddingNewModel;
-    if (!isAddingNewModel) newModelInput.value = "";
+  const updateNewCategoryState = () => {
+    const isAddingNewCategory = modelSelect.value === newCategoryValue;
+    newCategoryField.hidden = !isAddingNewCategory;
+    newCategoryInput.required = isAddingNewCategory;
+    newCategoryInput.disabled = !isAddingNewCategory;
+    if (!isAddingNewCategory) newCategoryInput.value = "";
   };
-  const resolveModelValue = () => {
-    const models = getModels();
-    if (modelSelect.value !== newModelValue) return modelSelect.value.trim();
+  const resolveCategoryValue = () => {
+    const categories = getCategories();
+    if (modelSelect.value !== newCategoryValue) return modelSelect.value.trim();
 
-    const requestedModel = newModelInput.value.trim().replace(/\s+/g, " ");
-    const existingModel = models.find((model) => model.toLowerCase() === requestedModel.toLowerCase());
-    return existingModel ?? requestedModel;
+    const requestedCategory = newCategoryInput.value.trim().replace(/\s+/g, " ");
+    const existingCategory = categories.find((category) => category.toLowerCase() === requestedCategory.toLowerCase());
+    return existingCategory ?? requestedCategory;
   };
 
-  renderModelOptions();
-  updateNewModelState();
+  renderCategoryOptions();
+  updateNewCategoryState();
   enhanceFilterSelects(inventoryForm);
 
   if (!inventoryForm.dataset.bound) {
-    modelSelect.addEventListener("change", updateNewModelState);
+    modelSelect.addEventListener("change", updateNewCategoryState);
 
     inventoryForm.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -3874,9 +3813,9 @@ function initCreateStockPage() {
       const currentUser = getCurrentUser();
       const timestamp = new Date().toISOString();
       const userStamp = buildUserStamp(currentUser);
-      const model = resolveModelValue();
+      const model = resolveCategoryValue();
       if (!model) {
-        showNotice(content, "Choose an existing model or enter a new model before saving.");
+        showNotice(content, "Choose an existing category or enter a new category before saving.");
         return;
       }
       const quantity = Math.max(Math.floor(Number(form.get("quantity") ?? 0)), 0);
@@ -3918,8 +3857,8 @@ function initCreateStockPage() {
 
       saveData(nextData);
       inventoryForm.reset();
-      renderModelOptions("");
-      updateNewModelState();
+      renderCategoryOptions("");
+      updateNewCategoryState();
       showToast(`Inventory item added successfully by ${getUserDisplayName(currentUser)}.`);
     });
     inventoryForm.dataset.bound = "true";
