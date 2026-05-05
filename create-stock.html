@@ -131,13 +131,17 @@
               <input name="unit" type="text" placeholder="pcs / rolls / m" required>
             </label>
             <label>
+              Quantity
+              <input name="quantity" type="number" min="0" step="1" value="0" required>
+            </label>
+            <label>
               Location
               <input name="location" type="text" placeholder="Main Store A-01" required>
             </label>
           </div>
           <div class="form-actions">
             <button type="submit" class="button-primary">Save Item</button>
-            <span class="form-hint">New items start with zero stock. Use Add Stocks after saving to record received quantities.</span>
+            <span class="form-hint">Enter the starting LC Stock quantity, or leave it as 0 if stock will be received later.</span>
           </div>
         </form>
       </section>

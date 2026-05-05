@@ -1007,6 +1007,10 @@ function showCreateStockConfirmationDialog(item) {
               <strong>${escapeHtml(item.unit)}</strong>
             </div>
             <div class="create-review-field">
+              <span>Quantity</span>
+              <strong>${escapeHtml(String(Number(item.quantity ?? 0)))}</strong>
+            </div>
+            <div class="create-review-field">
               <span>Brand</span>
               <strong>${escapeHtml(item.brand)}</strong>
             </div>
@@ -2861,63 +2865,82 @@ function getActivityDetailRecord(type, id, data) {
 
 function buildHandoverDocumentMarkup(record, items) {
   const totalIssuedQuantity = items.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
-  const totalConsignmentIssued = items.reduce((sum, line) => sum + Number(line.consignmentQuantity || 0), 0);
+  const companyLogoMarkup = `
+    <div class="company-logo-mark" aria-label="Links Creation">
+      <div class="company-logo-text">
+        <strong><span>LINKS</span> CREATION</strong>
+        <small>Linking People, Creating Business</small>
+      </div>
+      <svg class="company-logo-rings" viewBox="0 0 96 52" aria-hidden="true" focusable="false">
+        <ellipse cx="38" cy="26" rx="34" ry="12" transform="rotate(-26 38 26)" fill="none" stroke="#008a39" stroke-width="5" />
+        <ellipse cx="50" cy="26" rx="34" ry="12" transform="rotate(-26 50 26)" fill="none" stroke="#124da1" stroke-width="5" />
+        <ellipse cx="64" cy="26" rx="30" ry="12" transform="rotate(-57 64 26)" fill="none" stroke="#e4252b" stroke-width="5" />
+      </svg>
+    </div>
+  `;
   return `
     <section class="print-header">
-      <div>
-        <p class="eyebrow">Internal Company Form</p>
-        <h1>Stock Handover Form</h1>
-        <p>Document No: <strong>${escapeHtml(record.documentNo)}</strong></p>
+      <div class="print-brand-block">
+        ${companyLogoMarkup}
+        <div class="print-title-block">
+          <p class="eyebrow">Material Issue Document</p>
+          <h1>Material Handover Form</h1>
+          <p class="print-muted">For internal issuance and external vendor acknowledgment</p>
+        </div>
       </div>
-      <div>
-        <p><strong>Date Issued:</strong> ${formatDateTime(record.createdAt)}</p>
-        <p><strong>Project Title:</strong> ${escapeHtml(record.projectTitle ?? "-")}</p>
-        <p><strong>Received By:</strong> ${escapeHtml(record.receivedBy ?? "-")}</p>
-        <p><strong>Prepared By:</strong> ${escapeHtml(record.createdByName ?? "Unknown User")}</p>
+      <div class="print-document-box">
+        <p><span>Document No.</span><strong>${escapeHtml(record.documentNo)}</strong></p>
+        <p><span>Date Issued</span><strong>${formatDateTime(record.createdAt)}</strong></p>
+        <p><span>Status</span><strong>Issued</strong></p>
       </div>
     </section>
 
-    <section class="print-section print-grid">
-      <div>
-        <p><strong>Total Items:</strong> ${items.length}</p>
-        <p><strong>Total Quantity Issued:</strong> ${totalIssuedQuantity}</p>
-        <p><strong>Consignment Issued:</strong> ${totalConsignmentIssued}</p>
-        <p><strong>Project Title:</strong> ${escapeHtml(record.projectTitle ?? "-")}</p>
+    <section class="print-section print-detail-panel">
+      <div class="print-section-title">
+        <span>01</span>
+        <h2>Handover Details</h2>
       </div>
-      <div>
-        <p><strong>Received By:</strong> ${escapeHtml(record.receivedBy ?? "-")}</p>
-        <p><strong>Prepared By:</strong> ${escapeHtml(record.createdByName ?? "Unknown User")}</p>
-        <p><strong>Date Issued:</strong> ${formatDateTime(record.createdAt)}</p>
-        <p><strong>Document No:</strong> ${escapeHtml(record.documentNo)}</p>
+      <div class="print-field-grid">
+        <div class="print-field"><span>Project / Work Order</span><strong>${escapeHtml(record.projectTitle ?? "-")}</strong></div>
+        <div class="print-field"><span>Received By</span><strong>${escapeHtml(record.receivedBy ?? "-")}</strong></div>
+        <div class="print-field"><span>Prepared By</span><strong>${escapeHtml(record.createdByName ?? "Unknown User")}</strong></div>
+        <div class="print-field"><span>Issue Reference</span><strong>${escapeHtml(record.documentNo)}</strong></div>
       </div>
+    </section>
+
+    <section class="print-section print-summary-strip" aria-label="Issue summary">
+      <div><span>Line Items</span><strong>${items.length}</strong></div>
+      <div><span>Total Quantity Issued</span><strong>${totalIssuedQuantity}</strong></div>
     </section>
 
     <section class="print-section">
-      <table>
+      <div class="print-section-title">
+        <span>02</span>
+        <h2>Issued Items</h2>
+      </div>
+      <table class="handover-items-table">
         <thead>
           <tr>
+            <th>No.</th>
             <th>Brand</th>
             <th>Model</th>
             <th>Description</th>
             <th>Stock Code</th>
-            <th>Quantity</th>
-            <th>LC Stock</th>
-            <th>Consignment</th>
+            <th>Total Qty</th>
             <th>Unit</th>
           </tr>
         </thead>
         <tbody>
-          ${items.map((line) => {
+          ${items.map((line, index) => {
             const item = line.itemSnapshot ?? {};
             return `
               <tr>
+                <td>${index + 1}</td>
                 <td>${escapeHtml(item.brand ?? "-")}</td>
                 <td>${escapeHtml(item.model ?? "-")}</td>
                 <td>${escapeHtml(item.name ?? "-")}</td>
                 <td>${escapeHtml(item.sku ?? "-")}</td>
                 <td>${line.quantity}</td>
-                <td>${Number(line.ownQuantity || 0)}</td>
-                <td>${Number(line.consignmentQuantity || 0)}</td>
                 <td>${escapeHtml(item.unit ?? "-")}</td>
               </tr>
             `;
@@ -2926,22 +2949,36 @@ function buildHandoverDocumentMarkup(record, items) {
       </table>
     </section>
 
-    <section class="print-section print-grid">
-      <div>
-        <p><strong>Project Title:</strong></p>
-        <p>${escapeHtml(record.projectTitle ?? "-")}</p>
+    <section class="print-section handover-acknowledgement">
+      <div class="print-section-title">
+        <span>03</span>
+        <h2>Acknowledgment</h2>
       </div>
-      <div>
-        <p><strong>Items Issued:</strong> ${items.map((line) => escapeHtml(line.itemSnapshot?.name ?? "Item")).join("<br>")}</p>
-        <p><strong>Remaining Balance Snapshot:</strong><br>${items.map((line) => `${escapeHtml(line.itemSnapshot?.sku ?? "-")}: ${Math.max(typeof line.balanceAfter === "object" ? line.balanceAfter?.quantity ?? 0 : line.balanceAfter ?? 0, 0)} total, ${Math.max(line.consignmentToRestock ?? 0, 0)} consignment to restock`).join("<br>")}</p>
-      </div>
+      <p>The items listed above have been handed over in the quantities stated. The receiver acknowledges receipt of the materials and agrees to notify the issuing party promptly if any discrepancy is found.</p>
     </section>
 
     <section class="signatures">
-      <div class="signature-line">Prepared By</div>
-      <div class="signature-line">Received By</div>
-      <div class="signature-line">Approved By</div>
+      <div class="signature-box">
+        <div class="signature-line"></div>
+        <strong>Prepared By</strong>
+        <span>Name / Signature / Date</span>
+      </div>
+      <div class="signature-box">
+        <div class="signature-line"></div>
+        <strong>Received By</strong>
+        <span>Name / Signature / Date</span>
+      </div>
+      <div class="signature-box">
+        <div class="signature-line"></div>
+        <strong>Approved By</strong>
+        <span>Name / Signature / Date</span>
+      </div>
     </section>
+
+    <footer class="print-footer">
+      <span>Generated by Inventory Management System</span>
+      <span>${escapeHtml(record.documentNo)}</span>
+    </footer>
   `;
 }
 
@@ -2957,7 +2994,7 @@ function downloadHandoverFile(stockOutId) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(record.documentNo)} | Stock Handover Form</title>
+  <title>${escapeHtml(record.documentNo)} | Material Handover Form</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body class="print-page">
@@ -3842,12 +3879,18 @@ function initCreateStockPage() {
         showNotice(content, "Choose an existing model or enter a new model before saving.");
         return;
       }
+      const quantity = Math.max(Math.floor(Number(form.get("quantity") ?? 0)), 0);
+      if (!Number.isFinite(quantity)) {
+        showNotice(content, "Enter a valid starting quantity before saving.");
+        return;
+      }
       const pendingItem = {
         brand: String(form.get("brand") ?? "").trim(),
         model,
         name: String(form.get("name") ?? "").trim(),
         sku: String(form.get("sku") ?? "").trim(),
         unit: String(form.get("unit") ?? "").trim(),
+        quantity,
         location: String(form.get("location") ?? "").trim()
       };
 
@@ -3862,8 +3905,8 @@ function initCreateStockPage() {
         name: pendingItem.name,
         sku: pendingItem.sku,
         unit: pendingItem.unit,
-        quantity: 0,
-        ownQuantity: 0,
+        quantity: pendingItem.quantity,
+        ownQuantity: pendingItem.quantity,
         consignmentQuantity: 0,
         consignmentBaseline: 0,
         reorderLevel: 0,
