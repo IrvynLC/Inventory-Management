@@ -1,9 +1,14 @@
-const STORAGE_KEY = "ims-company-data-v3";
-const LEGACY_DATA_STORAGE_KEYS = ["ims-company-data-v2"];
+const STORAGE_KEY = "ims-company-data-v4";
+const LEGACY_DATA_STORAGE_KEYS = ["ims-company-data-v2", "ims-company-data-v3"];
 const INVENTORY_PAGE_SIZE = 8;
 const USER_STORAGE_KEY = "ims-users-v4";
 const SESSION_STORAGE_KEY = "ims-session-user-id-v2";
-const PROTECTED_PAGES = new Set(["home", "inventory", "activity-history", "activity-detail", "add-stock", "draw-stock", "create-stock", "handover"]);
+const API_DATA_ENDPOINT = "/api/data";
+const API_LOGIN_ENDPOINT = "/api/login";
+const API_LOGOUT_ENDPOINT = "/api/logout";
+const API_SESSION_ENDPOINT = "/api/session";
+const API_TIMEOUT_MS = 4000;
+const PROTECTED_PAGES = new Set(["home", "inventory", "activity-history", "activity-detail", "add-stock", "draw-stock", "create-stock", "relocate-stock", "handover"]);
 const defaultUsers = [
   {
     id: "user-fenny",
@@ -49,12 +54,20 @@ const defaultUsers = [
   }
 ];
 
+let currentUserCache = null;
+let sessionLoadPromise = null;
+
 const defaultData = {
   inventory: [],
   adjustments: [],
   stockOuts: [],
-  corrections: []
+  corrections: [],
+  relocations: []
 };
+
+function cloneData(data) {
+  return JSON.parse(JSON.stringify(data));
+}
 
 function clearLegacyDataStorage() {
   LEGACY_DATA_STORAGE_KEYS.forEach((key) => {
@@ -97,17 +110,42 @@ function loadUsers() {
 }
 
 function getCurrentUser() {
-  const currentUserId = localStorage.getItem(SESSION_STORAGE_KEY);
-  if (!currentUserId) return null;
-  return loadUsers().find((user) => user.id === currentUserId) ?? null;
+  return currentUserCache;
 }
 
-function setCurrentUser(userId) {
-  localStorage.setItem(SESSION_STORAGE_KEY, userId);
+function setCurrentUser(user) {
+  currentUserCache = user ? { ...user } : null;
+  localStorage.removeItem(SESSION_STORAGE_KEY);
 }
 
 function clearCurrentUser() {
+  currentUserCache = null;
+  sessionLoadPromise = null;
   localStorage.removeItem(SESSION_STORAGE_KEY);
+}
+
+async function fetchCurrentUser() {
+  if (sessionLoadPromise) return sessionLoadPromise;
+
+  sessionLoadPromise = (async () => {
+    try {
+      const response = await fetchWithTimeout(API_SESSION_ENDPOINT, {
+        cache: "no-store"
+      });
+      if (!response.ok) {
+        currentUserCache = null;
+        return null;
+      }
+      const payload = await response.json();
+      currentUserCache = payload.user ? { ...payload.user } : null;
+      return currentUserCache;
+    } catch (error) {
+      currentUserCache = null;
+      return null;
+    }
+  })();
+
+  return sessionLoadPromise;
 }
 
 function getCurrentPagePath() {
@@ -118,6 +156,7 @@ function getCurrentPagePath() {
 function normalizeRole(role) {
   const value = String(role ?? "").trim().toLowerCase();
   if (value === "administrator") return "admin";
+  if (value === "adminstrator") return "admin";
   if (value === "adminstrative") return "administrative";
   return value;
 }
@@ -129,6 +168,9 @@ function canAccessPage(page, user) {
   const role = normalizeRole(user.role);
   if (["home", "inventory", "activity-history", "activity-detail", "handover"].includes(page)) {
     return true;
+  }
+  if (page === "relocate-stock") {
+    return role === "admin";
   }
   if (["add-stock", "create-stock"].includes(page)) {
     return role !== "engineer";
@@ -176,6 +218,7 @@ function canAccessHref(href, user) {
     "handover.html": "handover",
     "add-stock.html": "add-stock",
     "create-stock.html": "create-stock",
+    "relocate-stock.html": "relocate-stock",
     "draw-stock.html": "draw-stock"
   };
 
@@ -196,8 +239,8 @@ function redirectAfterLogin() {
   window.location.replace(safeNext);
 }
 
-function ensureAuthenticatedSession() {
-  const currentUser = getCurrentUser();
+async function ensureAuthenticatedSession() {
+  const currentUser = await fetchCurrentUser();
   const page = document.body.dataset.page;
 
   if (PROTECTED_PAGES.has(page) && !currentUser) {
@@ -231,6 +274,54 @@ function buildUserStamp(user) {
   };
 }
 
+function hasOwnValue(object, key) {
+  return Object.prototype.hasOwnProperty.call(Object(object), key);
+}
+
+function getDefaultConsignmentQuantity() {
+  return 0;
+}
+
+function normalizeStockCondition(value) {
+  const condition = String(value ?? "").trim().toLowerCase();
+  if (["used", "use", "yes", "y", "true", "1"].includes(condition)) return "used";
+  return "new";
+}
+
+function formatStockConditionLabel(value) {
+  return normalizeStockCondition(value) === "used" ? "Used" : "New Stock";
+}
+
+function renderStockConditionBadge(value) {
+  const condition = normalizeStockCondition(value);
+  if (condition !== "used") return "";
+  return `<span class="stock-condition-badge stock-condition-badge-${condition}">${escapeHtml(formatStockConditionLabel(condition))}</span>`;
+}
+
+function normalizeInternalFlag(value) {
+  const flag = String(value ?? "").trim().toUpperCase();
+  if (["Y", "YES", "TRUE", "1"].includes(flag)) return "Y";
+  if (flag === "P") return "P";
+  return "N";
+}
+
+function isInternalStock(value) {
+  return normalizeInternalFlag(value) === "Y";
+}
+
+function formatInternalStockLabel(value) {
+  const flag = normalizeInternalFlag(value);
+  if (flag === "Y") return "Internal";
+  if (flag === "P") return "P";
+  return "No";
+}
+
+function renderInternalStockBadge(value) {
+  const flag = normalizeInternalFlag(value);
+  const className = flag === "Y" ? "internal" : flag === "P" ? "pending" : "external";
+  return `<span class="stock-internal-badge stock-internal-badge-${className}">${escapeHtml(formatInternalStockLabel(flag))}</span>`;
+}
+
 function normalizeInventoryRecord(item) {
   const createdAt = item.createdAt ?? new Date().toISOString();
   const createdByName = item.createdByName ?? item.createdBy?.name ?? "System Seed";
@@ -239,7 +330,7 @@ function normalizeInventoryRecord(item) {
   const lastUpdatedByName = item.lastUpdatedByName ?? item.updatedByName ?? createdByName;
   const lastUpdatedByUserId = item.lastUpdatedByUserId ?? item.updatedByUserId ?? createdByUserId;
   const defaultConsignment = getDefaultConsignmentQuantity(item.sku);
-  const hasConsignmentFields = Object.hasOwn(item, "consignmentQuantity") || Object.hasOwn(item, "consignmentBaseline");
+  const hasConsignmentFields = hasOwnValue(item, "consignmentQuantity") || hasOwnValue(item, "consignmentBaseline");
   const legacyQuantity = Number(item.quantity ?? 0);
   const ownQuantity = Math.max(Number(item.ownQuantity ?? legacyQuantity), 0);
   let consignmentQuantity = Math.max(Number(item.consignmentQuantity ?? (hasConsignmentFields ? 0 : defaultConsignment)), 0);
@@ -259,6 +350,9 @@ function normalizeInventoryRecord(item) {
     ownQuantity,
     consignmentQuantity,
     consignmentBaseline,
+    stockCondition: normalizeStockCondition(item.stockCondition ?? item.condition ?? item.isUsedStock),
+    internalFlag: normalizeInternalFlag(item.internalFlag ?? item.internal ?? item.isInternalStock),
+    isInternalStock: isInternalStock(item.internalFlag ?? item.internal ?? item.isInternalStock),
     location: item.location ?? "Main Store",
     reorderLevel: item.reorderLevel ?? 0,
     createdAt,
@@ -560,29 +654,6 @@ function createItemSnapshot(item) {
   };
 }
 
-function dedupeInventoryRecords(inventory) {
-  const seen = new Set();
-
-  return inventory.filter((item) => {
-    const key = [
-      item.brand ?? "",
-      item.model ?? "",
-      item.name ?? "",
-      item.sku ?? "",
-      item.unit ?? "",
-      item.quantity ?? "",
-      item.location ?? ""
-    ].join("|");
-
-    if (seen.has(key)) {
-      return false;
-    }
-
-    seen.add(key);
-    return true;
-  });
-}
-
 function normalizeAdjustmentRecord(entry) {
   return {
     ...entry,
@@ -608,52 +679,243 @@ function normalizeCorrectionRecord(entry) {
   };
 }
 
+function normalizeRelocationRecord(entry) {
+  return {
+    ...entry,
+    actorName: entry.actorName ?? entry.createdByName ?? entry.createdBy?.name ?? "Unknown User",
+    actorUserId: entry.actorUserId ?? entry.createdByUserId ?? entry.createdBy?.userId ?? null,
+    itemSnapshot: entry.itemSnapshot ?? null,
+    fromLocation: entry.fromLocation ?? entry.previousLocation ?? "-",
+    toLocation: entry.toLocation ?? entry.location ?? "-",
+    remarks: entry.remarks ?? ""
+  };
+}
+
 function upgradeLegacyInventory(inventory) {
-  return dedupeInventoryRecords(
-    inventory
-      .filter((item) => !["MAT-001", "MAT-002"].includes(item.sku))
-      .map((item) => normalizeInventoryRecord(item))
-  );
+  return inventory.map((item) => normalizeInventoryRecord(item));
+}
+
+function getNormalizedDefaultData(loadError = "") {
+  return {
+    inventory: defaultData.inventory.map((item) => normalizeInventoryRecord(item)),
+    adjustments: [],
+    stockOuts: [],
+    corrections: [],
+    relocations: [],
+    ...(loadError ? { loadError } : {})
+  };
+}
+
+function normalizeDataObject(data) {
+  return {
+    inventory: upgradeLegacyInventory(data?.inventory ?? []),
+    adjustments: (data?.adjustments ?? []).map((entry) => normalizeAdjustmentRecord(entry)),
+    stockOuts: (data?.stockOuts ?? []).map((entry) => normalizeStockOutRecord(entry)),
+    corrections: (data?.corrections ?? []).map((entry) => normalizeCorrectionRecord(entry)),
+    relocations: (data?.relocations ?? []).map((entry) => normalizeRelocationRecord(entry))
+  };
 }
 
 function loadData() {
   clearLegacyDataStorage();
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) {
-    const normalizedDefaultData = {
-      inventory: defaultData.inventory.map((item) => normalizeInventoryRecord(item)),
-      adjustments: [],
-      stockOuts: [],
-      corrections: []
-    };
+    const normalizedDefaultData = getNormalizedDefaultData();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedDefaultData));
-    return structuredClone(normalizedDefaultData);
+    return cloneData(normalizedDefaultData);
   }
 
   try {
     const parsed = JSON.parse(raw);
-    const normalized = {
-      inventory: upgradeLegacyInventory(parsed.inventory ?? []),
-      adjustments: (parsed.adjustments ?? []).map((entry) => normalizeAdjustmentRecord(entry)),
-      stockOuts: (parsed.stockOuts ?? []).map((entry) => normalizeStockOutRecord(entry)),
-      corrections: (parsed.corrections ?? []).map((entry) => normalizeCorrectionRecord(entry))
-    };
+    const normalized = normalizeDataObject(parsed);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
     return normalized;
   } catch (error) {
-    const normalizedDefaultData = {
-      inventory: defaultData.inventory.map((item) => normalizeInventoryRecord(item)),
-      adjustments: [],
-      stockOuts: [],
-      corrections: []
-    };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedDefaultData));
-    return structuredClone(normalizedDefaultData);
+    try {
+      const parsed = JSON.parse(raw);
+      return {
+        inventory: Array.isArray(parsed.inventory) ? parsed.inventory : [],
+        adjustments: Array.isArray(parsed.adjustments) ? parsed.adjustments : [],
+        stockOuts: Array.isArray(parsed.stockOuts) ? parsed.stockOuts : [],
+        corrections: Array.isArray(parsed.corrections) ? parsed.corrections : [],
+        relocations: Array.isArray(parsed.relocations) ? parsed.relocations : [],
+        loadError: error.message
+      };
+    } catch (parseError) {
+      const normalizedDefaultData = getNormalizedDefaultData(parseError.message);
+      return cloneData(normalizedDefaultData);
+    }
   }
 }
 
+function hasMeaningfulData(data) {
+  return ["inventory", "adjustments", "stockOuts", "corrections", "relocations"]
+    .some((key) => Array.isArray(data?.[key]) && data[key].length > 0);
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      ...options,
+      credentials: options.credentials ?? "same-origin",
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function persistDataToBackend(data) {
+  const response = await fetchWithTimeout(API_DATA_ENDPOINT, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ data })
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      clearCurrentUser();
+      redirectToLogin();
+    }
+    const error = new Error(`Backend save failed with HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+}
+
+async function sendBackendAction(action, payload) {
+  const response = await fetchWithTimeout(`/api/actions/${action}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (response.status === 401) {
+    clearCurrentUser();
+    redirectToLogin();
+    throw new Error("Your session expired. Please sign in again.");
+  }
+
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result.ok === false) {
+    throw new Error(result.error || `Backend action failed with HTTP ${response.status}`);
+  }
+
+  if (result.data) {
+    const normalized = normalizeDataObject(result.data);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+    backendSyncAvailable = true;
+    return { ...result, data: normalized };
+  }
+
+  return result;
+}
+
+let backendLoadPromise = null;
+let backendSyncAvailable = true;
+
+function initializeBackendData() {
+  if (backendLoadPromise) return backendLoadPromise;
+
+  backendLoadPromise = (async () => {
+    const localData = loadData();
+
+    try {
+      const response = await fetchWithTimeout(API_DATA_ENDPOINT, { cache: "no-store" });
+      if (!response.ok) {
+        if (response.status === 401) {
+          clearCurrentUser();
+          redirectToLogin();
+        }
+        const error = new Error(`Backend returned HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+
+      const payload = await response.json();
+      const serverData = normalizeDataObject(payload.data ?? payload);
+      const shouldSeedBackend = !hasMeaningfulData(serverData) && hasMeaningfulData(localData);
+      const activeData = shouldSeedBackend ? localData : serverData;
+
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(activeData));
+      if (shouldSeedBackend) {
+        await persistDataToBackend(activeData);
+      }
+      backendSyncAvailable = true;
+      return activeData;
+    } catch (error) {
+      backendSyncAvailable = false;
+      console.warn("Using browser storage because backend sync is unavailable:", error);
+      return localData;
+    }
+  })();
+
+  return backendLoadPromise;
+}
+
 function saveData(data) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  const normalized = normalizeDataObject(data);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+
+  if (backendSyncAvailable) {
+    const syncPromise = persistDataToBackend(normalized);
+    syncPromise.catch((error) => {
+      backendSyncAvailable = false;
+      console.warn("Inventory changes were saved in this browser but not synced to the backend:", error);
+      showToast("Saved in this browser, but backend sync is unavailable. Ask IT to check the server.");
+    });
+    return syncPromise;
+  }
+
+  return Promise.resolve();
+}
+
+function getStoredInventoryDiagnostics() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) {
+    return {
+      hasStorage: false,
+      rawLength: 0,
+      inventoryCount: 0,
+      parseError: ""
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      hasStorage: true,
+      rawLength: raw.length,
+      inventoryCount: Array.isArray(parsed.inventory) ? parsed.inventory.length : 0,
+      parseError: ""
+    };
+  } catch (error) {
+    return {
+      hasStorage: true,
+      rawLength: raw.length,
+      inventoryCount: 0,
+      parseError: error.message
+    };
+  }
+}
+
+function resetInventoryViewState() {
+  [
+    "ims-inventory-page",
+    "ims-inventory-search",
+    "ims-inventory-filter",
+    "ims-inventory-brand-filter",
+    "ims-inventory-model-filter",
+    "ims-inventory-location-filter",
+    "ims-inventory-condition-filter"
+  ].forEach((key) => localStorage.removeItem(key));
+  localStorage.setItem("ims-inventory-page", "1");
 }
 
 function escapeHtml(text) {
@@ -928,8 +1190,16 @@ function showCreateStockConfirmationDialog(item) {
               <strong>${escapeHtml(item.unit)}</strong>
             </div>
             <div class="create-review-field">
-              <span>Quantity</span>
-              <strong>${escapeHtml(String(Number(item.quantity ?? 0)))}</strong>
+              <span>LC Stock</span>
+              <strong>${escapeHtml(String(Number(item.ownQuantity ?? 0)))}</strong>
+            </div>
+            <div class="create-review-field">
+              <span>Consignment Stock</span>
+              <strong>${escapeHtml(String(Number(item.consignmentQuantity ?? 0)))}</strong>
+            </div>
+            <div class="create-review-field">
+              <span>Condition</span>
+              <strong>${escapeHtml(formatStockConditionLabel(item.stockCondition))}</strong>
             </div>
             <div class="create-review-field">
               <span>Brand</span>
@@ -939,11 +1209,102 @@ function showCreateStockConfirmationDialog(item) {
               <span>Category</span>
               <strong>${escapeHtml(item.model)}</strong>
             </div>
+            <div class="create-review-field">
+              <span>Location</span>
+              <strong>${escapeHtml(item.location)}</strong>
+            </div>
           </div>
         </section>
         <div class="confirm-dialog-actions">
           <button type="button" class="button-link" data-confirm-cancel>Review Again</button>
           <button type="button" class="button-primary" data-confirm-submit>Confirm Save Item</button>
+        </div>
+      </div>
+    `;
+
+    const close = (confirmed) => {
+      document.removeEventListener("keydown", handleKeydown);
+      modal.classList.remove("is-open");
+      setTimeout(() => modal.remove(), 180);
+      document.body.classList.remove("modal-open");
+      resolve(confirmed);
+    };
+
+    document.body.append(modal);
+    document.body.classList.add("modal-open");
+    requestAnimationFrame(() => modal.classList.add("is-open"));
+    modal.querySelector("[data-confirm-submit]")?.focus();
+
+    modal.querySelectorAll("[data-confirm-cancel]").forEach((element) => {
+      element.addEventListener("click", () => close(false));
+    });
+    modal.querySelector("[data-confirm-submit]")?.addEventListener("click", () => close(true));
+
+    function handleKeydown(event) {
+      if (event.key === "Escape") {
+        close(false);
+      }
+    }
+    document.addEventListener("keydown", handleKeydown);
+  });
+}
+
+function showRelocateStockConfirmationDialog(details) {
+  return new Promise((resolve) => {
+    const item = details.item;
+    const modal = document.createElement("div");
+    modal.className = "confirm-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-labelledby", "relocate-stock-confirm-title");
+    modal.innerHTML = `
+      <div class="confirm-modal-backdrop" data-confirm-cancel></div>
+      <div class="confirm-dialog create-stock-confirm-dialog">
+        <div class="confirm-dialog-header">
+          <div>
+            <p class="eyebrow">Review Relocation</p>
+            <h3 id="relocate-stock-confirm-title">Confirm stock relocation</h3>
+            <p class="section-copy">Check the item and storage locations before saving this warehouse movement.</p>
+          </div>
+        </div>
+        <section class="create-review-card" aria-label="Relocation details">
+          <div class="create-review-header">
+            <div>
+              <span class="create-review-kicker">Item description</span>
+              <h4>${escapeHtml(item.name ?? item.sku ?? "Inventory item")}</h4>
+            </div>
+            <span class="create-review-location">${escapeHtml(item.sku ?? "-")}</span>
+          </div>
+          <div class="create-review-grid">
+            <div class="create-review-field">
+              <span>Brand</span>
+              <strong>${escapeHtml(item.brand ?? "Generic")}</strong>
+            </div>
+            <div class="create-review-field">
+              <span>Category</span>
+              <strong>${escapeHtml(item.model ?? "Standard")}</strong>
+            </div>
+            <div class="create-review-field">
+              <span>Current Location</span>
+              <strong>${escapeHtml(details.fromLocation)}</strong>
+            </div>
+            <div class="create-review-field">
+              <span>New Location</span>
+              <strong>${escapeHtml(details.toLocation)}</strong>
+            </div>
+            <div class="create-review-field">
+              <span>Current Stock</span>
+              <strong>${escapeHtml(String(Number(item.quantity ?? 0)))} ${escapeHtml(item.unit ?? "")}</strong>
+            </div>
+            <div class="create-review-field">
+              <span>Remarks</span>
+              <strong>${escapeHtml(details.remarks || "No remarks provided")}</strong>
+            </div>
+          </div>
+        </section>
+        <div class="confirm-dialog-actions">
+          <button type="button" class="button-link" data-confirm-cancel>Review Again</button>
+          <button type="button" class="button-primary" data-confirm-submit>Confirm Relocation</button>
         </div>
       </div>
     `;
@@ -1226,6 +1587,13 @@ function getActivityDetailSectionCopy(record) {
       copy: "Review the item-level quantities issued and reference details for this stock-out record."
     };
   }
+  if (record.type === "relocate") {
+    return {
+      eyebrow: "Relocation Line",
+      title: "Moved stock location",
+      copy: "Review the item and storage location change captured for this warehouse movement."
+    };
+  }
   return {
     eyebrow: "Correction Lines",
     title: "Corrected stock movement",
@@ -1347,6 +1715,47 @@ function renderMovementCorrectionTable(record, movementSourceKind, showOwnMoveme
 
 function renderActivityDetailItemsSection(record) {
   const sectionCopy = getActivityDetailSectionCopy(record);
+  if (record.type === "relocate") {
+    return `
+      <section class="panel activity-detail-items">
+        <div class="panel-header panel-header-tight">
+          <div>
+            <p class="eyebrow">${escapeHtml(sectionCopy.eyebrow)}</p>
+            <h3>${escapeHtml(sectionCopy.title)}</h3>
+            <p class="section-copy">${escapeHtml(sectionCopy.copy)}</p>
+          </div>
+        </div>
+        <table class="activity-detail-master-table">
+          <thead>
+            <tr>
+              <th>Brand</th>
+              <th>Category</th>
+              <th>Description</th>
+              <th>Stock Code</th>
+              <th>Current Stock</th>
+              <th>Unit</th>
+              <th>From Location</th>
+              <th>To Location</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${record.itemRows.map((item) => `
+              <tr>
+                <td>${escapeHtml(item.brand)}</td>
+                <td>${escapeHtml(item.model)}</td>
+                <td><strong>${escapeHtml(item.name)}</strong></td>
+                <td>${escapeHtml(item.sku)}</td>
+                <td>${escapeHtml(String(item.quantity ?? 0))}</td>
+                <td>${escapeHtml(item.unit)}</td>
+                <td>${escapeHtml(item.fromLocation)}</td>
+                <td>${escapeHtml(item.toLocation)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </section>
+    `;
+  }
   const isCreateRecord = record.type === "create";
   const isCreateCorrection = record.type === "correction" && getCorrectableRecordKind(record) === "create";
   const isMovementCorrection = record.type === "correction" && !isCreateCorrection;
@@ -1691,9 +2100,15 @@ function formatUserSummary(user) {
   return `${escapeHtml(getUserDisplayName(user))} | ${escapeHtml(getUserRole(user))}`;
 }
 
-function handleSignOut() {
-  clearCurrentUser();
-  redirectToLogin();
+async function handleSignOut() {
+  try {
+    await fetchWithTimeout(API_LOGOUT_ENDPOINT, { method: "POST" });
+  } catch (error) {
+    console.warn("Could not clear backend session:", error);
+  } finally {
+    clearCurrentUser();
+    redirectToLogin();
+  }
 }
 
 function attachSignOutHandler(button) {
@@ -1754,6 +2169,11 @@ function applyRoleNavigation(currentUser) {
       link.remove();
     }
   });
+
+  document.querySelectorAll("#home-action-grid .primary-action-card").forEach((card, index) => {
+    const icon = card.querySelector(".primary-action-icon");
+    if (icon) icon.textContent = String(index + 1).padStart(2, "0");
+  });
 }
 
 function initHomePage(currentUser) {
@@ -1808,13 +2228,13 @@ function initLoginPage(currentUser) {
   }
 
   loginTitle.textContent = "Sign in to continue";
-  loginCopy.textContent = "Use one of the default accounts below so the system can record who creates, adds, and draws stock.";
+  loginCopy.textContent = "Sign in so the server can record who creates, adds, relocates, and draws stock.";
   authPanel.innerHTML = `
     <section class="auth-panel">
       <div>
         <p class="eyebrow">User Login</p>
         <h2>Inventory access</h2>
-        <p class="auth-copy">This version uses a browser-based login so each stock action can be tagged to a user.</p>
+        <p class="auth-copy">Access is verified by the backend before stock data can be opened or changed.</p>
       </div>
       <form id="login-form" class="stack-form auth-form">
         <div class="field-grid auth-grid">
@@ -1829,7 +2249,7 @@ function initLoginPage(currentUser) {
         </div>
         <div class="form-actions auth-actions">
           <button type="submit" class="button-primary">Sign In</button>
-          <span class="form-hint">Credentials are stored locally for this demo setup.</span>
+          <span class="form-hint">Your session is managed by the backend.</span>
         </div>
       </form>
       <section class="auth-accounts">
@@ -1851,20 +2271,37 @@ function initLoginPage(currentUser) {
   const loginForm = document.querySelector("#login-form");
   if (!loginForm) return;
 
-  loginForm.addEventListener("submit", (event) => {
+  loginForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(loginForm);
     const username = String(form.get("username") ?? "").trim().toLowerCase();
     const password = String(form.get("password") ?? "");
-    const matchedUser = loadUsers().find((user) => user.username.toLowerCase() === username && user.password === password);
+    const submitButton = loginForm.querySelector("button[type='submit']");
+    if (submitButton) submitButton.disabled = true;
 
-    if (!matchedUser) {
-      showNotice(authPanel, "Invalid username or password.");
-      return;
+    try {
+      const response = await fetchWithTimeout(API_LOGIN_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ username, password })
+      });
+
+      if (!response.ok) {
+        showNotice(authPanel, "Invalid username or password.");
+        return;
+      }
+
+      const payload = await response.json();
+      setCurrentUser(payload.user);
+      sessionLoadPromise = Promise.resolve(currentUserCache);
+      redirectAfterLogin();
+    } catch (error) {
+      showNotice(authPanel, "Could not reach the backend login service. Please try again.");
+    } finally {
+      if (submitButton) submitButton.disabled = false;
     }
-
-    setCurrentUser(matchedUser.id);
-    redirectAfterLogin();
   });
 }
 
@@ -2408,6 +2845,29 @@ function getActivityEvents(data) {
     };
   });
 
+  const relocations = (data.relocations ?? []).map((entry) => {
+    const item = data.inventory.find((record) => record.id === entry.itemId);
+    const snapshot = entry.itemSnapshot ?? item ?? {};
+    return {
+      id: `relocate-${entry.id}`,
+      type: "relocate",
+      sourceId: entry.id,
+      title: "Stock Relocated",
+      actor: entry.actorName ?? "Unknown User",
+      itemSummary: snapshot.name ?? snapshot.sku ?? "Inventory item",
+      itemLines: [snapshot.name ?? snapshot.sku ?? "Inventory item"],
+      detail: `${entry.fromLocation ?? "-"} to ${entry.toLocation ?? "-"} | ${entry.remarks || "No remarks provided"}`,
+      detailRows: [
+        { label: "From Location", value: entry.fromLocation ?? "-" },
+        { label: "To Location", value: entry.toLocation ?? "-" },
+        { label: "Remarks", value: entry.remarks || "No remarks provided" }
+      ],
+      quantityText: formatLineItemCount(1),
+      createdAt: entry.createdAt,
+      actions: []
+    };
+  });
+
   const corrections = (data.corrections ?? []).map((entry) => {
     const itemLines = (entry.itemRows ?? []).map((row) => row.name ?? row.sku ?? "Item");
     const sourceKind = getCorrectionSourceKind(entry) ?? entry.sourceType;
@@ -2434,7 +2894,7 @@ function getActivityEvents(data) {
     };
   });
 
-  return [...inventoryCreates, ...stockIns, ...stockOuts, ...corrections]
+  return [...inventoryCreates, ...stockIns, ...stockOuts, ...relocations, ...corrections]
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
@@ -2699,6 +3159,42 @@ function getActivityDetailRecord(type, id, data) {
     };
   }
 
+  if (type === "relocate") {
+    const relocation = (data.relocations ?? []).find((entry) => entry.id === id);
+    if (!relocation) return null;
+    const item = data.inventory.find((entry) => entry.id === relocation.itemId);
+    const snapshot = relocation.itemSnapshot ?? item ?? {};
+    return {
+      type,
+      sourceId: relocation.id,
+      title: "Stock Relocation Record",
+      actor: relocation.actorName ?? "Unknown User",
+      createdAt: relocation.createdAt,
+      summary: snapshot.name ?? snapshot.sku ?? "Inventory item",
+      detailRows: [
+        { label: "From Location", value: relocation.fromLocation ?? "-" },
+        { label: "To Location", value: relocation.toLocation ?? "-" },
+        { label: "Remarks", value: relocation.remarks || "No remarks provided" }
+      ],
+      itemRows: [{
+        itemId: relocation.itemId,
+        brand: snapshot.brand ?? "Generic",
+        model: snapshot.model ?? "Standard",
+        name: snapshot.name ?? "-",
+        sku: snapshot.sku ?? "-",
+        quantity: snapshot.quantity ?? item?.quantity ?? 0,
+        unit: snapshot.unit ?? item?.unit ?? "-",
+        fromLocation: relocation.fromLocation ?? "-",
+        toLocation: relocation.toLocation ?? "-"
+      }],
+      balanceRows: [],
+      hasCorrection: false,
+      latestCorrectionId: null,
+      canCorrect: false,
+      handoverId: null
+    };
+  }
+
   if (type === "correction") {
     const correction = (data.corrections ?? []).find((entry) => entry.id === id);
     if (!correction) return null;
@@ -2800,7 +3296,6 @@ function getActivityDetailRecord(type, id, data) {
 }
 
 function buildHandoverDocumentMarkup(record, items) {
-  const totalIssuedQuantity = items.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
   const companyLogoMarkup = `
     <div class="company-logo-mark" aria-label="Links Creation">
       <div class="company-logo-text">
@@ -2819,15 +3314,14 @@ function buildHandoverDocumentMarkup(record, items) {
       <div class="print-brand-block">
         ${companyLogoMarkup}
         <div class="print-title-block">
-          <p class="eyebrow">Material Issue Document</p>
+          <p class="eyebrow">Controlled Material Handover</p>
           <h1>Material Handover Form</h1>
-          <p class="print-muted">For internal issuance and external vendor acknowledgment</p>
+          <p class="print-muted">Formal acknowledgment for internal or external material issuance.</p>
         </div>
       </div>
       <div class="print-document-box">
-        <p><span>Document No.</span><strong>${escapeHtml(record.documentNo)}</strong></p>
-        <p><span>Date Issued</span><strong>${formatDateTime(record.createdAt)}</strong></p>
-        <p><span>Status</span><strong>Issued</strong></p>
+        <p><span>Form No.</span><strong>${escapeHtml(record.documentNo)}</strong></p>
+        <p><span>Date</span><strong>${formatDateTime(record.createdAt)}</strong></p>
       </div>
     </section>
 
@@ -2838,18 +3332,12 @@ function buildHandoverDocumentMarkup(record, items) {
       </div>
       <div class="print-field-grid">
         <div class="print-field"><span>Project / Work Order</span><strong>${escapeHtml(record.projectTitle ?? "-")}</strong></div>
-        <div class="print-field"><span>Received By</span><strong>${escapeHtml(record.receivedBy ?? "-")}</strong></div>
+        <div class="print-field"><span>Issued To</span><strong>${escapeHtml(record.receivedBy ?? "-")}</strong></div>
         <div class="print-field"><span>Prepared By</span><strong>${escapeHtml(record.createdByName ?? "Unknown User")}</strong></div>
-        <div class="print-field"><span>Issue Reference</span><strong>${escapeHtml(record.documentNo)}</strong></div>
       </div>
     </section>
 
-    <section class="print-section print-summary-strip" aria-label="Issue summary">
-      <div><span>Line Items</span><strong>${items.length}</strong></div>
-      <div><span>Total Quantity Issued</span><strong>${totalIssuedQuantity}</strong></div>
-    </section>
-
-    <section class="print-section">
+    <section class="print-section handover-items-section">
       <div class="print-section-title">
         <span>02</span>
         <h2>Issued Items</h2>
@@ -2895,25 +3383,20 @@ function buildHandoverDocumentMarkup(record, items) {
 
     <section class="signatures">
       <div class="signature-box">
-        <div class="signature-line"></div>
-        <strong>Prepared By</strong>
+        <span class="signature-role">Issued By</span>
+        <div class="signature-line"><strong>${escapeHtml(record.createdByName ?? "Issued By")}</strong></div>
         <span>Name / Signature / Date</span>
       </div>
       <div class="signature-box">
+        <span class="signature-role">Received By</span>
         <div class="signature-line"></div>
-        <strong>Received By</strong>
-        <span>Name / Signature / Date</span>
-      </div>
-      <div class="signature-box">
-        <div class="signature-line"></div>
-        <strong>Approved By</strong>
         <span>Name / Signature / Date</span>
       </div>
     </section>
 
     <footer class="print-footer">
-      <span>Generated by Inventory Management System</span>
       <span>${escapeHtml(record.documentNo)}</span>
+      <span>Computer-generated document</span>
     </footer>
   `;
 }
@@ -2925,13 +3408,23 @@ function downloadHandoverFile(stockOutId) {
 
   const items = normalizeStockOutItems(record, data.inventory);
   const documentMarkup = buildHandoverDocumentMarkup(record, items);
+  const stylesheetText = Array.from(document.styleSheets)
+    .map((styleSheet) => {
+      try {
+        return Array.from(styleSheet.cssRules).map((rule) => rule.cssText).join("\n");
+      } catch (error) {
+        return "";
+      }
+    })
+    .filter(Boolean)
+    .join("\n");
   const exportHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtml(record.documentNo)} | Material Handover Form</title>
-  <link rel="stylesheet" href="styles.css">
+  <style>${stylesheetText}</style>
 </head>
 <body class="print-page">
   <main class="print-shell">
@@ -2951,9 +3444,9 @@ function downloadHandoverFile(stockOutId) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function applyActivityCorrection(type, id, form) {
-  const nextData = loadData();
-  const record = getActivityDetailRecord(type, id, nextData);
+async function applyActivityCorrection(type, id, form) {
+  const data = loadData();
+  const record = getActivityDetailRecord(type, id, data);
   const currentUser = getCurrentUser();
   const reason = form.querySelector("#correction-reason")?.value.trim() ?? "";
   const correctionKind = getCorrectableRecordKind(record);
@@ -2962,19 +3455,13 @@ function applyActivityCorrection(type, id, form) {
     return { ok: false, message: `You do not have permission to correct this ${correctionKind === "create" ? "stock creation" : correctionKind} record. Required role: ${getCorrectionPermissionLabel(correctionKind)}.` };
   }
   if (!reason) return { ok: false, message: "Enter a correction reason before saving." };
-  if ((nextData.corrections ?? []).some((entry) => entry.sourceType === type && entry.sourceId === id)) {
+  if ((data.corrections ?? []).some((entry) => entry.sourceType === type && entry.sourceId === id)) {
     return { ok: false, message: "This record already has a correction. Review the correction record before applying another change." };
   }
 
-  const correctionRows = [];
-  const timestamp = new Date().toISOString();
-
+  const rows = [];
   if (correctionKind === "create") {
-    const original = record.itemRows[0];
-    const item = nextData.inventory.find((entry) => entry.id === original?.itemId);
-    if (!original || !item) return { ok: false, message: "The inventory item could not be found." };
-
-    const nextValues = {
+    const correctedValues = {
       brand: String(form.elements["correctBrand-0"]?.value ?? "").trim().replace(/\s+/g, " "),
       model: String(form.elements["correctCategory-0"]?.value ?? "").trim().replace(/\s+/g, " "),
       name: String(form.elements["correctName-0"]?.value ?? "").trim().replace(/\s+/g, " "),
@@ -2982,159 +3469,36 @@ function applyActivityCorrection(type, id, form) {
       unit: String(form.elements["correctUnit-0"]?.value ?? "").trim().replace(/\s+/g, " "),
       location: String(form.elements["correctLocation-0"]?.value ?? "").trim().replace(/\s+/g, " ")
     };
-
-    if (Object.values(nextValues).some((value) => !value)) {
+    if (Object.values(correctedValues).some((value) => !value)) {
       return { ok: false, message: "Please complete all item information before saving." };
     }
-
-    const previousValues = {
-      brand: item.brand ?? "Generic",
-      model: item.model ?? "Standard",
-      name: item.name ?? "-",
-      sku: item.sku ?? "-",
-      unit: item.unit ?? "-",
-      location: item.location ?? "Main Store"
-    };
-    const changedFields = Object.keys(nextValues).filter((key) => String(previousValues[key] ?? "") !== String(nextValues[key] ?? ""));
-    if (!changedFields.length) return { ok: false, message: "No item information changes were entered." };
-
-    Object.assign(item, nextValues, {
-      lastUpdatedAt: timestamp,
-      lastUpdatedByUserId: currentUser?.id ?? null,
-      lastUpdatedByName: getUserDisplayName(currentUser)
-    });
-
-    correctionRows.push({
-      itemId: item.id,
-      ...nextValues,
-      quantity: 0,
-      ownQuantity: item.ownQuantity ?? item.quantity ?? 0,
-      consignmentQuantity: item.consignmentQuantity ?? 0,
-      previousValues,
-      correctedValues: nextValues,
-      changedFields
-    });
-
-    const correction = {
-      id: crypto.randomUUID(),
-      sourceType: type,
-      sourceId: id,
-      rootSourceType: record.rootSourceType ?? type,
-      rootSourceId: record.rootSourceId ?? id,
-      reason,
-      itemRows: correctionRows,
-      createdAt: timestamp,
-      actorUserId: currentUser?.id ?? null,
-      actorName: getUserDisplayName(currentUser)
-    };
-    nextData.corrections = [...(nextData.corrections ?? []), correction];
-    saveData(nextData);
-    return { ok: true, correctionId: correction.id };
-  }
-
-  for (const [index] of Array.from(form.querySelectorAll("[data-correction-row]")).entries()) {
-    const original = record.itemRows[index];
-    const item = nextData.inventory.find((entry) => entry.id === original?.itemId);
-    if (!original || !item) return { ok: false, message: "One of the correction items could not be found in inventory." };
-
-    const balanceBefore = {
-      quantity: Number(item.quantity ?? 0),
-      ownQuantity: Number(item.ownQuantity ?? item.quantity ?? 0),
-      consignmentQuantity: Number(item.consignmentQuantity ?? 0),
-      consignmentBaseline: Number(item.consignmentBaseline ?? item.consignmentQuantity ?? 0),
-      consignmentToRestock: getConsignmentUsed(item)
-    };
-
-    let ownDelta = 0;
-    let consignmentDelta = 0;
-    if (correctionKind === "stock-in") {
-      const correctQuantity = Math.max(Number(form.elements[`correctQuantity-${index}`]?.value ?? 0), 0);
-      const correctStockType = form.elements[`correctStockType-${index}`]?.value === "consignment" ? "consignment" : "own";
-      ownDelta = (correctStockType === "consignment" ? 0 : correctQuantity) - Number(original.ownQuantity ?? 0);
-      consignmentDelta = (correctStockType === "consignment" ? correctQuantity : 0) - Number(original.consignmentQuantity ?? 0);
-    } else {
-      const correctOwnIssued = Math.max(Number(form.elements[`correctOwn-${index}`]?.value ?? 0), 0);
-      const correctConsignmentIssued = Math.max(Number(form.elements[`correctConsignment-${index}`]?.value ?? 0), 0);
-      ownDelta = Number(original.ownQuantity ?? 0) - correctOwnIssued;
-      consignmentDelta = Number(original.consignmentQuantity ?? 0) - correctConsignmentIssued;
-    }
-    if (!ownDelta && !consignmentDelta) continue;
-
-    const currentOwn = Number(item.ownQuantity ?? item.quantity ?? 0);
-    const currentConsignment = Number(item.consignmentQuantity ?? 0);
-    if (currentOwn + ownDelta < 0) {
-      return { ok: false, message: `This correction cannot be saved because LC Stock would fall below 0 for ${item.name}. Check the corrected issued quantity.` };
-    }
-    if (currentConsignment + consignmentDelta < 0) {
-      return { ok: false, message: `This correction cannot be saved because Consignment Stock would fall below 0 for ${item.name}. Check the corrected issued quantity.` };
-    }
-
-    item.ownQuantity = currentOwn + ownDelta;
-    item.consignmentQuantity = currentConsignment + consignmentDelta;
-    if (correctionKind === "stock-in" && consignmentDelta < 0) {
-      item.consignmentBaseline = Math.max(Number(item.consignmentBaseline ?? 0) + consignmentDelta, item.consignmentQuantity, 0);
-    } else {
-      item.consignmentBaseline = Math.max(Number(item.consignmentBaseline ?? 0), item.consignmentQuantity);
-    }
-    syncInventoryTotals(item);
-    item.lastUpdatedAt = timestamp;
-    item.lastUpdatedByUserId = currentUser?.id ?? null;
-    item.lastUpdatedByName = getUserDisplayName(currentUser);
-
-    const balanceAfter = {
-      quantity: Number(item.quantity ?? 0),
-      ownQuantity: Number(item.ownQuantity ?? item.quantity ?? 0),
-      consignmentQuantity: Number(item.consignmentQuantity ?? 0),
-      consignmentBaseline: Number(item.consignmentBaseline ?? item.consignmentQuantity ?? 0),
-      consignmentToRestock: getConsignmentUsed(item)
-    };
-
-    correctionRows.push({
-      itemId: item.id,
-      brand: item.brand ?? "Generic",
-      model: item.model ?? "Standard",
-      name: item.name,
-      sku: item.sku,
-      unit: item.unit ?? "-",
-      location: item.location ?? "Main Store",
-      quantityDelta: ownDelta + consignmentDelta,
-      ownDelta,
-      consignmentDelta,
-      quantity: correctionKind === "stock-in" ? Math.max(Number(form.elements[`correctQuantity-${index}`]?.value ?? 0), 0) : ownDelta + consignmentDelta,
-      stockType: correctionKind === "stock-in" && form.elements[`correctStockType-${index}`]?.value === "consignment" ? "consignment" : "own",
-      ownQuantity: correctionKind === "stock-out" ? Math.max(Number(form.elements[`correctOwn-${index}`]?.value ?? 0), 0) : Math.max(Number(form.elements[`correctStockType-${index}`]?.value === "consignment" ? 0 : form.elements[`correctQuantity-${index}`]?.value ?? 0), 0),
-      consignmentQuantity: correctionKind === "stock-out" ? Math.max(Number(form.elements[`correctConsignment-${index}`]?.value ?? 0), 0) : Math.max(Number(form.elements[`correctStockType-${index}`]?.value === "consignment" ? form.elements[`correctQuantity-${index}`]?.value ?? 0 : 0), 0),
-      correctedValues: correctionKind === "stock-in"
-        ? {
+    rows.push({ correctedValues });
+  } else {
+    Array.from(form.querySelectorAll("[data-correction-row]")).forEach((row, index) => {
+      if (correctionKind === "stock-in") {
+        rows.push({
+          correctedValues: {
             quantity: Math.max(Number(form.elements[`correctQuantity-${index}`]?.value ?? 0), 0),
             stockType: form.elements[`correctStockType-${index}`]?.value === "consignment" ? "consignment" : "own"
           }
-        : {
+        });
+      } else {
+        rows.push({
+          correctedValues: {
             ownQuantity: Math.max(Number(form.elements[`correctOwn-${index}`]?.value ?? 0), 0),
             consignmentQuantity: Math.max(Number(form.elements[`correctConsignment-${index}`]?.value ?? 0), 0)
-          },
-      balanceBefore,
-      balanceAfter
+          }
+        });
+      }
     });
   }
 
-  if (!correctionRows.length) return { ok: false, message: "No correction changes were entered." };
-
-  const correction = {
-    id: crypto.randomUUID(),
-    sourceType: type,
-    sourceId: id,
-    rootSourceType: record.rootSourceType ?? type,
-    rootSourceId: record.rootSourceId ?? id,
-    reason,
-    itemRows: correctionRows,
-    createdAt: timestamp,
-    actorUserId: currentUser?.id ?? null,
-    actorName: getUserDisplayName(currentUser)
-  };
-  nextData.corrections = [...(nextData.corrections ?? []), correction];
-  saveData(nextData);
-  return { ok: true, correctionId: correction.id };
+  try {
+    const result = await sendBackendAction("correct-activity", { type, id, reason, rows });
+    return { ok: true, correctionId: result.correction?.id };
+  } catch (error) {
+    return { ok: false, message: error.message || "The correction could not be saved to the backend." };
+  }
 }
 
 function renderAdjustmentIssueList(container, emptyState, summary, inventory) {
@@ -3297,6 +3661,7 @@ function getValidFilterValue(currentValue, storedValue, values) {
 
 function renderInventoryPage() {
   const data = loadData();
+  const diagnostics = getStoredInventoryDiagnostics();
   const summary = document.querySelector("#inventory-summary");
   const tableBody = document.querySelector("#inventory-table");
   const paginationSummary = document.querySelector("#inventory-pagination-summary");
@@ -3304,14 +3669,14 @@ function renderInventoryPage() {
   const searchInput = document.querySelector("#inventory-search");
   const brandFilter = document.querySelector("#inventory-brand-filter");
   const modelFilter = document.querySelector("#inventory-model-filter");
-  const statusFilter = document.querySelector("#inventory-status-filter");
+  const conditionFilter = document.querySelector("#inventory-condition-filter");
   const pageSizeSelect = document.querySelector("#inventory-page-size");
   const clearFiltersButton = document.querySelector("#inventory-clear-filters");
   const pageKey = "ims-inventory-page";
   const searchKey = "ims-inventory-search";
-  const filterKey = "ims-inventory-filter";
   const brandKey = "ims-inventory-brand-filter";
   const modelKey = "ims-inventory-model-filter";
+  const conditionKey = "ims-inventory-condition-filter";
   const pageSizeKey = "ims-inventory-page-size";
   localStorage.removeItem("ims-inventory-location-filter");
   const rawSearch = localStorage.getItem(searchKey) ?? searchInput?.value ?? "";
@@ -3320,8 +3685,8 @@ function renderInventoryPage() {
   const models = getUniqueInventoryValues(data.inventory, "model");
   const activeBrand = getValidFilterValue(brandFilter?.value, localStorage.getItem(brandKey), brands);
   const activeCategory = getValidFilterValue(modelFilter?.value, localStorage.getItem(modelKey), models);
-  const rawStatusFilter = localStorage.getItem(filterKey) ?? statusFilter?.value ?? "all";
-  const activeFilter = ["all", "low-stock", "in-stock", "out-of-stock"].includes(rawStatusFilter) ? rawStatusFilter : "all";
+  const rawConditionFilter = localStorage.getItem(conditionKey) ?? conditionFilter?.value ?? "all";
+  const activeCondition = ["all", "new", "used"].includes(rawConditionFilter) ? rawConditionFilter : "all";
   const selectedPageSize = Number(localStorage.getItem(pageSizeKey) ?? pageSizeSelect?.value ?? String(INVENTORY_PAGE_SIZE));
   const pageSize = [8, 20, 50, 100].includes(selectedPageSize) ? selectedPageSize : INVENTORY_PAGE_SIZE;
   const totalQuantity = data.inventory.reduce((sum, item) => sum + Math.max(item.quantity, 0), 0);
@@ -3338,8 +3703,8 @@ function renderInventoryPage() {
   populateFilterSelect(brandFilter, brands, activeBrand, "All brands");
   populateFilterSelect(modelFilter, models, activeCategory, "All categories");
 
-  if (statusFilter && statusFilter.value !== activeFilter) {
-    statusFilter.value = activeFilter;
+  if (conditionFilter && conditionFilter.value !== activeCondition) {
+    conditionFilter.value = activeCondition;
   }
 
   if (pageSizeSelect && String(pageSizeSelect.value) !== String(pageSize)) {
@@ -3368,9 +3733,7 @@ function renderInventoryPage() {
     if (!matchesSearch) return false;
     if (activeBrand !== "all" && item.brand !== activeBrand) return false;
     if (activeCategory !== "all" && item.model !== activeCategory) return false;
-    if (activeFilter === "low-stock") return item.quantity <= (item.reorderLevel ?? 0);
-    if (activeFilter === "in-stock") return item.quantity > 0;
-    if (activeFilter === "out-of-stock") return item.quantity <= 0;
+    if (activeCondition !== "all" && normalizeStockCondition(item.stockCondition) !== activeCondition) return false;
     return true;
   });
 
@@ -3382,7 +3745,7 @@ function renderInventoryPage() {
   const hasActiveFilters = Boolean(searchTerm)
     || activeBrand !== "all"
     || activeCategory !== "all"
-    || activeFilter !== "all";
+    || activeCondition !== "all";
 
   paginationSummary.textContent = filteredInventory.length
     ? `Showing ${startIndex + 1}-${Math.min(endIndex, filteredInventory.length)} of ${filteredInventory.length}${hasActiveFilters ? " matching" : ""} items`
@@ -3395,7 +3758,12 @@ function renderInventoryPage() {
         <tr>
           <td>${escapeHtml(item.brand ?? "Generic")}</td>
           <td>${escapeHtml(item.model ?? "Standard")}</td>
-          <td><strong>${escapeHtml(item.name)}</strong></td>
+          <td>
+            <div class="inventory-description-cell">
+              <strong>${escapeHtml(item.name)}</strong>
+              ${renderStockConditionBadge(item.stockCondition)}
+            </div>
+          </td>
           <td>${escapeHtml(item.sku)}</td>
           <td>${renderInventoryBalanceCell(item)}</td>
           <td>${escapeHtml(item.unit ?? "-")}</td>
@@ -3406,7 +3774,7 @@ function renderInventoryPage() {
         hasActiveFilters
           ? "No inventory items matched your current search or filter."
           : "No inventory items yet. Add your first stock record to start operations tracking."
-      }</div></td></tr>`;
+      }<br><span class="muted">Storage check: ${diagnostics.inventoryCount} saved item${diagnostics.inventoryCount === 1 ? "" : "s"}${diagnostics.parseError ? ` | Data error: ${escapeHtml(diagnostics.parseError)}` : ""}${data.loadError ? ` | Load warning: ${escapeHtml(data.loadError)}` : ""}</span></div></td></tr>`;
 
   if (filteredInventory.length <= pageSize) {
     pagination.innerHTML = "";
@@ -3481,13 +3849,13 @@ function renderInventoryPage() {
     filter.dataset.bound = "true";
   });
 
-  if (statusFilter && !statusFilter.dataset.bound) {
-    statusFilter.addEventListener("change", () => {
-      localStorage.setItem(filterKey, statusFilter.value);
+  if (conditionFilter && !conditionFilter.dataset.bound) {
+    conditionFilter.addEventListener("change", () => {
+      localStorage.setItem(conditionKey, conditionFilter.value);
       localStorage.setItem(pageKey, "1");
       renderInventoryPage();
     });
-    statusFilter.dataset.bound = "true";
+    conditionFilter.dataset.bound = "true";
   }
 
   if (pageSizeSelect && !pageSizeSelect.dataset.bound) {
@@ -3501,9 +3869,9 @@ function renderInventoryPage() {
 
   if (clearFiltersButton && !clearFiltersButton.dataset.bound) {
     clearFiltersButton.addEventListener("click", () => {
-      [searchKey, filterKey, brandKey, modelKey].forEach((key) => localStorage.removeItem(key));
+      [searchKey, "ims-inventory-filter", brandKey, modelKey, conditionKey].forEach((key) => localStorage.removeItem(key));
       if (searchInput) searchInput.value = "";
-      [brandFilter, modelFilter, statusFilter].forEach((filter) => {
+      [brandFilter, modelFilter, conditionFilter].forEach((filter) => {
         if (filter) filter.value = "all";
       });
       localStorage.setItem(pageKey, "1");
@@ -3511,6 +3879,7 @@ function renderInventoryPage() {
     });
     clearFiltersButton.dataset.bound = "true";
   }
+
 }
 
 function renderActivityHistoryPage() {
@@ -3643,8 +4012,8 @@ function renderActivityHistoryPage() {
       `).join("")
     : `<tr><td colspan="7"><div class="empty-state">${
         hasActiveActivityFilters
-          ? "No stock creation, stock-in, or stock-out activity matched the selected filters."
-          : "No stock creation, stock-in, or stock-out activity has been recorded yet."
+          ? "No stock creation, stock-in, stock-out, or relocation activity matched the selected filters."
+          : "No stock creation, stock-in, stock-out, or relocation activity has been recorded yet."
       }</div></td></tr>`;
 
   if (filteredEvents.length <= pageSize) {
@@ -3811,18 +4180,18 @@ function initCreateStockPage() {
       event.preventDefault();
       const form = new FormData(inventoryForm);
       const currentUser = getCurrentUser();
-      const timestamp = new Date().toISOString();
-      const userStamp = buildUserStamp(currentUser);
       const model = resolveCategoryValue();
       if (!model) {
         showNotice(content, "Choose an existing category or enter a new category before saving.");
         return;
       }
-      const quantity = Math.max(Math.floor(Number(form.get("quantity") ?? 0)), 0);
-      if (!Number.isFinite(quantity)) {
-        showNotice(content, "Enter a valid starting quantity before saving.");
+      const ownQuantity = Math.max(Math.floor(Number(form.get("ownQuantity") ?? 0)), 0);
+      const consignmentQuantity = Math.max(Math.floor(Number(form.get("consignmentQuantity") ?? 0)), 0);
+      if (!Number.isFinite(ownQuantity) || !Number.isFinite(consignmentQuantity)) {
+        showNotice(content, "Enter valid LC Stock and consignment quantities before saving.");
         return;
       }
+      const quantity = ownQuantity + consignmentQuantity;
       const pendingItem = {
         brand: String(form.get("brand") ?? "").trim(),
         model,
@@ -3830,38 +4199,196 @@ function initCreateStockPage() {
         sku: String(form.get("sku") ?? "").trim(),
         unit: String(form.get("unit") ?? "").trim(),
         quantity,
+        ownQuantity,
+        consignmentQuantity,
+        stockCondition: normalizeStockCondition(form.get("stockCondition")),
         location: String(form.get("location") ?? "").trim()
       };
 
       const confirmed = await showCreateStockConfirmationDialog(pendingItem);
       if (!confirmed) return;
 
-      const nextData = loadData();
-      nextData.inventory.push({
-        id: crypto.randomUUID(),
-        brand: pendingItem.brand,
-        model: pendingItem.model,
-        name: pendingItem.name,
-        sku: pendingItem.sku,
-        unit: pendingItem.unit,
-        quantity: pendingItem.quantity,
-        ownQuantity: pendingItem.quantity,
-        consignmentQuantity: 0,
-        consignmentBaseline: 0,
-        reorderLevel: 0,
-        location: pendingItem.location,
-        createdAt: timestamp,
-        lastUpdatedAt: timestamp,
-        ...userStamp
-      });
-
-      saveData(nextData);
+      try {
+        await sendBackendAction("create-stock", pendingItem);
+      } catch (error) {
+        showNotice(content, error.message || "The stock could not be saved to the backend.");
+        return;
+      }
       inventoryForm.reset();
       renderCategoryOptions("");
       updateNewCategoryState();
+      resetInventoryViewState();
       showToast(`Inventory item added successfully by ${getUserDisplayName(currentUser)}.`);
     });
     inventoryForm.dataset.bound = "true";
+  }
+}
+
+function initRelocateStockPage() {
+  const content = document.querySelector(".main-shell");
+  const form = document.querySelector("#relocate-form");
+  const itemSelect = document.querySelector("#relocate-item");
+  const currentLocationDisplay = document.querySelector("#relocate-current-location");
+  const newLocationInput = document.querySelector("#relocate-new-location");
+  const remarksInput = document.querySelector("#relocate-remarks");
+  const relocateStockPicker = document.querySelector("[data-relocate-stock-picker]");
+  const relocateStockPickerButton = document.querySelector("#relocate-stock-picker-button");
+  const relocateStockPickerPopover = document.querySelector("#relocate-stock-picker-popover");
+  const relocateStockPickerSearch = document.querySelector("#relocate-stock-picker-search");
+  const relocateStockPickerList = document.querySelector("#relocate-stock-picker-list");
+  if (!content || !form || !itemSelect || !currentLocationDisplay || !newLocationInput || !remarksInput) return;
+
+  const renderOptions = (selectedId = "") => {
+    const inventory = loadData().inventory
+      .slice()
+      .sort((a, b) => String(a.model ?? "").localeCompare(String(b.model ?? "")) || String(a.name ?? "").localeCompare(String(b.name ?? "")));
+    itemSelect.innerHTML = [
+      `<option value="" disabled ${selectedId ? "" : "selected"}>Select an item</option>`,
+      ...inventory.map((item) => `
+        <option value="${escapeHtml(item.id)}" ${item.id === selectedId ? "selected" : ""}>
+          ${escapeHtml(item.name ?? "-")} | ${escapeHtml(item.sku ?? "-")} | ${escapeHtml(item.location ?? "Main Store")}
+        </option>
+      `)
+    ].join("");
+    if (selectedId) itemSelect.value = selectedId;
+  };
+
+  const getSelectedItem = () => {
+    const data = loadData();
+    return data.inventory.find((item) => item.id === itemSelect.value) ?? null;
+  };
+
+  const updateCurrentLocation = () => {
+    const item = getSelectedItem();
+    currentLocationDisplay.value = item?.location ?? "";
+    currentLocationDisplay.placeholder = item ? "" : "Select an item first";
+  };
+
+  renderOptions();
+  updateCurrentLocation();
+  const initialData = loadData();
+  renderStockPickerList(relocateStockPickerList, initialData.inventory, itemSelect.value, relocateStockPickerSearch?.value ?? "", {
+    onlyInStock: false,
+    emptyMessage: "No inventory items match your search."
+  });
+  updateStockPickerButton(relocateStockPickerButton, getSelectedItem(), { quantityLabel: "current" });
+
+  if (!form.dataset.bound) {
+    const setRelocateStockPickerOpen = (open) => {
+      if (!relocateStockPickerPopover || !relocateStockPickerButton) return;
+      relocateStockPickerPopover.hidden = !open;
+      relocateStockPickerButton.setAttribute("aria-expanded", String(open));
+      if (open) {
+        const currentData = loadData();
+        renderStockPickerList(relocateStockPickerList, currentData.inventory, itemSelect.value, relocateStockPickerSearch?.value ?? "", {
+          onlyInStock: false,
+          emptyMessage: "No inventory items match your search."
+        });
+        requestAnimationFrame(() => relocateStockPickerSearch?.focus());
+      }
+    };
+
+    const selectRelocateItem = (selectedItem) => {
+      if (!selectedItem) return;
+      itemSelect.value = selectedItem.id;
+      updateCurrentLocation();
+      updateStockPickerButton(relocateStockPickerButton, selectedItem, { quantityLabel: "current" });
+      renderStockPickerList(relocateStockPickerList, loadData().inventory, selectedItem.id, relocateStockPickerSearch?.value ?? "", {
+        onlyInStock: false,
+        emptyMessage: "No inventory items match your search."
+      });
+    };
+
+    relocateStockPickerButton?.addEventListener("click", () => {
+      setRelocateStockPickerOpen(relocateStockPickerPopover?.hidden ?? true);
+    });
+
+    relocateStockPickerSearch?.addEventListener("input", () => {
+      const currentData = loadData();
+      renderStockPickerList(relocateStockPickerList, currentData.inventory, itemSelect.value, relocateStockPickerSearch.value, {
+        onlyInStock: false,
+        emptyMessage: "No inventory items match your search."
+      });
+    });
+
+    relocateStockPickerList?.addEventListener("click", (event) => {
+      const option = event.target.closest("[data-stock-picker-option]");
+      if (!option) return;
+      const currentData = loadData();
+      const selectedItem = currentData.inventory.find((item) => item.id === option.dataset.stockPickerOption);
+      selectRelocateItem(selectedItem);
+      setRelocateStockPickerOpen(false);
+    });
+
+    document.addEventListener("click", (event) => {
+      if (!relocateStockPicker || relocateStockPicker.contains(event.target)) return;
+      setRelocateStockPickerOpen(false);
+    });
+
+    relocateStockPickerSearch?.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        setRelocateStockPickerOpen(false);
+        relocateStockPickerButton?.focus();
+      }
+    });
+
+    itemSelect.addEventListener("change", () => {
+      updateCurrentLocation();
+      updateStockPickerButton(relocateStockPickerButton, getSelectedItem(), { quantityLabel: "current" });
+    });
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const nextData = loadData();
+      const item = nextData.inventory.find((entry) => entry.id === itemSelect.value);
+      if (!item) {
+        showNotice(content, "Select an inventory item before saving the relocation.");
+        return;
+      }
+
+      const fromLocation = String(item.location ?? "Main Store").trim() || "Main Store";
+      const toLocation = newLocationInput.value.trim().replace(/\s+/g, " ");
+      const remarks = remarksInput.value.trim().replace(/\s+/g, " ");
+      if (!toLocation) {
+        showNotice(content, "Enter the new storage location before saving.");
+        return;
+      }
+      if (toLocation.toLowerCase() === fromLocation.toLowerCase()) {
+        showNotice(content, "The new location is the same as the current location.");
+        return;
+      }
+
+      const confirmed = await showRelocateStockConfirmationDialog({
+        item,
+        fromLocation,
+        toLocation,
+        remarks
+      });
+      if (!confirmed) return;
+
+      try {
+        await sendBackendAction("relocate-stock", {
+          itemId: item.id,
+          toLocation,
+          remarks
+        });
+      } catch (error) {
+        showNotice(content, error.message || "The relocation could not be saved to the backend.");
+        return;
+      }
+
+      form.reset();
+      renderOptions("");
+      updateCurrentLocation();
+      updateStockPickerButton(relocateStockPickerButton, null, { quantityLabel: "current" });
+      if (relocateStockPickerSearch) relocateStockPickerSearch.value = "";
+      renderStockPickerList(relocateStockPickerList, loadData().inventory, "", "", {
+        onlyInStock: false,
+        emptyMessage: "No inventory items match your search."
+      });
+      showToast("Stock relocation saved and audit record created.");
+    });
+    form.dataset.bound = "true";
   }
 }
 
@@ -4026,8 +4553,6 @@ function initAddStockPage() {
       event.preventDefault();
       const nextData = loadData();
       const currentUser = getCurrentUser();
-      const timestamp = new Date().toISOString();
-      const stockInSessionId = crypto.randomUUID();
       const lineItems = Array.from(adjustmentForm.querySelectorAll("[data-adjustment-item-row]"))
         .map((line) => ({
           itemId: line.dataset.itemId ?? "",
@@ -4058,62 +4583,12 @@ function initAddStockPage() {
 
       if (!confirmed) return;
 
-      lineItems.forEach((line) => {
-        const item = nextData.inventory.find((record) => record.id === line.itemId);
-        if (!item) return;
-        const allocation = calculateStockInAllocation(item, line.quantity, line.receivingPurpose);
-        const balanceBefore = {
-          quantity: Number(item.quantity ?? 0),
-          ownQuantity: Number(item.ownQuantity ?? item.quantity ?? 0),
-          consignmentQuantity: Number(item.consignmentQuantity ?? 0),
-          consignmentBaseline: Number(item.consignmentBaseline ?? item.consignmentQuantity ?? 0),
-          consignmentToRestock: getConsignmentUsed(item)
-        };
-
-        if (allocation.consignmentQuantity > 0) {
-          item.consignmentQuantity = Math.max(Number(item.consignmentQuantity ?? 0), 0) + allocation.consignmentQuantity;
-          item.consignmentBaseline = Math.max(Number(item.consignmentBaseline ?? 0), item.consignmentQuantity);
-        }
-        if (allocation.ownQuantity > 0) {
-          item.ownQuantity = Math.max(Number(item.ownQuantity ?? item.quantity ?? 0), 0) + allocation.ownQuantity;
-        }
-
-        syncInventoryTotals(item);
-        item.lastUpdatedAt = timestamp;
-        item.lastUpdatedByUserId = currentUser?.id ?? null;
-        item.lastUpdatedByName = getUserDisplayName(currentUser);
-        const balanceAfter = {
-          quantity: Number(item.quantity ?? 0),
-          ownQuantity: Number(item.ownQuantity ?? item.quantity ?? 0),
-          consignmentQuantity: Number(item.consignmentQuantity ?? 0),
-          consignmentBaseline: Number(item.consignmentBaseline ?? item.consignmentQuantity ?? 0),
-          consignmentToRestock: getConsignmentUsed(item)
-        };
-
-        [
-          { stockType: "consignment", quantity: allocation.consignmentQuantity },
-          { stockType: "own", quantity: allocation.ownQuantity }
-        ].filter((entry) => entry.quantity > 0).forEach((entry) => {
-          nextData.adjustments.push({
-            id: crypto.randomUUID(),
-            itemId: item.id,
-            type: "add",
-            stockInSessionId,
-            stockType: entry.stockType,
-            receivingPurpose: line.receivingPurpose,
-            quantity: entry.quantity,
-            receivedQuantity: line.quantity,
-            balanceBefore,
-            balanceAfter,
-            remarks: "",
-            createdAt: timestamp,
-            actorUserId: currentUser?.id ?? null,
-            actorName: getUserDisplayName(currentUser)
-          });
-        });
-      });
-
-      saveData(nextData);
+      try {
+        await sendBackendAction("add-stock", { lines: lineItems });
+      } catch (error) {
+        showNotice(content, error.message || "The stock-in transaction could not be saved to the backend.");
+        return;
+      }
       adjustmentForm.reset();
       adjustmentLines.innerHTML = "";
       refreshAddStockOptions();
@@ -4233,7 +4708,7 @@ function initDrawStockPage() {
       `);
     }
 
-    stockOutQuantityInput.value = "1";
+    stockOutQuantityInput.value = "0";
     updateStockOutSourceOptions(item);
     renderStockOutIssueList(stockOutLines, stockOutEmpty, stockOutSummary, currentData.inventory);
   };
@@ -4374,7 +4849,6 @@ function initDrawStockPage() {
       const form = new FormData(stockOutForm);
       const nextData = loadData();
       const currentUser = getCurrentUser();
-      const timestamp = new Date().toISOString();
       const lineItems = Array.from(stockOutForm.querySelectorAll("[data-stock-out-item-row]"))
         .map((line) => ({
           itemId: line.dataset.itemId ?? "",
@@ -4426,65 +4900,24 @@ function initDrawStockPage() {
       });
       if (!confirmed) return;
 
-      const issuedItems = lineItems.map((line) => {
-        const item = nextData.inventory.find((record) => record.id === line.itemId);
-        const ownBefore = Math.max(Number(item.ownQuantity ?? item.quantity ?? 0), 0);
-        const consignmentBefore = Math.max(Number(item.consignmentQuantity ?? 0), 0);
-        const balanceBefore = {
-          quantity: Number(item.quantity ?? 0),
-          ownQuantity: ownBefore,
-          consignmentQuantity: consignmentBefore,
-          consignmentBaseline: Number(item.consignmentBaseline ?? item.consignmentQuantity ?? 0),
-          consignmentToRestock: getConsignmentUsed(item)
-        };
-        const ownIssued = line.issueSource === "own" ? line.quantity : 0;
-        const consignmentIssued = line.issueSource === "consignment" ? line.quantity : 0;
-        item.ownQuantity = ownBefore - ownIssued;
-        item.consignmentQuantity = consignmentBefore - consignmentIssued;
-        syncInventoryTotals(item);
-        item.lastUpdatedAt = timestamp;
-        item.lastUpdatedByUserId = currentUser?.id ?? null;
-        item.lastUpdatedByName = getUserDisplayName(currentUser);
-        const balanceAfter = {
-          quantity: Number(item.quantity ?? 0),
-          ownQuantity: Number(item.ownQuantity ?? item.quantity ?? 0),
-          consignmentQuantity: Number(item.consignmentQuantity ?? 0),
-          consignmentBaseline: Number(item.consignmentBaseline ?? item.consignmentQuantity ?? 0),
-          consignmentToRestock: getConsignmentUsed(item)
-        };
-        return {
-          itemId: item.id,
-          quantity: line.quantity,
-          issueSource: line.issueSource,
-          ownQuantity: ownIssued,
-          consignmentQuantity: consignmentIssued,
-          balanceBefore,
-          balanceAfter,
-          ownBalanceAfter: item.ownQuantity,
-          consignmentBalanceAfter: item.consignmentQuantity,
-          consignmentToRestock: getConsignmentUsed(item),
-          itemSnapshot: createItemSnapshot(item)
-        };
-      });
+      let stockOutRecord;
+      try {
+        const result = await sendBackendAction("draw-stock", {
+          projectTitle: form.get("projectTitle").trim(),
+          receivedBy: form.get("receivedBy").trim(),
+          lines: lineItems
+        });
+        stockOutRecord = result.stockOutRecord;
+      } catch (error) {
+        showNotice(content, error.message || "The stock-out transaction could not be saved to the backend.");
+        return;
+      }
 
-      const stockOutRecord = {
-        id: crypto.randomUUID(),
-        documentNo: `HF-${new Date().getFullYear()}-${String(nextData.stockOuts.length + 1).padStart(4, "0")}`,
-        items: issuedItems,
-        projectTitle: form.get("projectTitle").trim(),
-        receivedBy: form.get("receivedBy").trim(),
-        createdAt: timestamp,
-        createdByUserId: currentUser?.id ?? null,
-        createdByName: getUserDisplayName(currentUser)
-      };
-
-      const totalConsignmentIssued = issuedItems.reduce((sum, item) => sum + Number(item.consignmentQuantity || 0), 0);
-      nextData.stockOuts.push(stockOutRecord);
-      saveData(nextData);
+      const totalConsignmentIssued = (stockOutRecord?.items ?? []).reduce((sum, item) => sum + Number(item.consignmentQuantity || 0), 0);
       stockOutForm.reset();
       if (stockOutLines && stockOutEmpty && stockOutSummary) {
         stockOutLines.innerHTML = "";
-        renderStockOutIssueList(stockOutLines, stockOutEmpty, stockOutSummary, nextData.inventory);
+        renderStockOutIssueList(stockOutLines, stockOutEmpty, stockOutSummary, loadData().inventory);
       }
       refreshDrawStockOptions();
       showToast(`Stock withdrawn by ${getUserDisplayName(currentUser)}. Handover form ${stockOutRecord.documentNo} created.${totalConsignmentIssued ? ` ${totalConsignmentIssued} consignment item(s) must be restocked.` : ""}`);
@@ -4631,7 +5064,7 @@ function renderActivityDetailPage() {
       event.preventDefault();
       const confirmed = await showCorrectionConfirmationDialog(record, correctionForm);
       if (!confirmed) return;
-      const result = applyActivityCorrection(type, id, correctionForm);
+      const result = await applyActivityCorrection(type, id, correctionForm);
       if (!result.ok) {
         showNotice(correctionForm, result.message);
         return;
@@ -4652,12 +5085,12 @@ function resetPageScroll() {
   setTimeout(jumpToTop, 120);
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   if ("scrollRestoration" in history) {
     history.scrollRestoration = "manual";
   }
   resetPageScroll();
-  const currentUser = ensureAuthenticatedSession();
+  const currentUser = await ensureAuthenticatedSession();
   if (PROTECTED_PAGES.has(document.body.dataset.page) && !currentUser) {
     return;
   }
@@ -4666,7 +5099,10 @@ document.addEventListener("DOMContentLoaded", () => {
   initAuthChrome(currentUser);
   applyRoleNavigation(currentUser);
   showQueuedToast();
-  if (["inventory", "activity-history", "activity-detail", "add-stock", "draw-stock"].includes(document.body.dataset.page)) {
+  if (currentUser) {
+    await initializeBackendData();
+  }
+  if (["inventory", "activity-history", "activity-detail", "add-stock", "draw-stock", "relocate-stock"].includes(document.body.dataset.page)) {
     initSidebar();
   }
   initSectionNavigation();
@@ -4687,6 +5123,9 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   if (document.body.dataset.page === "draw-stock") {
     initDrawStockPage();
+  }
+  if (document.body.dataset.page === "relocate-stock") {
+    initRelocateStockPage();
   }
   if (document.body.dataset.page === "create-stock") {
     initCreateStockPage();

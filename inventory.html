@@ -66,6 +66,13 @@
               <span class="nav-subtitle">Process stock-out transactions</span>
             </span>
           </a>
+          <a class="nav-link" href="relocate-stock.html">
+            <span class="nav-icon">MOV</span>
+            <span class="nav-copy">
+              <span class="nav-title">Relocate Stock</span>
+              <span class="nav-subtitle">Move items between storage locations</span>
+            </span>
+          </a>
           <a class="nav-link" href="activity-history.html">
             <span class="nav-icon">LOG</span>
             <span class="nav-copy">
@@ -106,7 +113,6 @@
         </div>
         <div class="topbar-actions">
           <a class="button-link" href="index.html">Back to Home</a>
-          <a class="button-link" href="draw-stock.html">Draw Stocks</a>
         </div>
       </header>
 
@@ -141,12 +147,11 @@
                 </select>
               </label>
               <label class="filter-field filter-field-select">
-                <span class="filter-label">Availability</span>
-                <select id="inventory-status-filter">
-                  <option value="all">All items</option>
-                  <option value="low-stock">Low stock</option>
-                  <option value="in-stock">In stock</option>
-                  <option value="out-of-stock">Out of stock</option>
+                <span class="filter-label">Condition</span>
+                <select id="inventory-condition-filter">
+                  <option value="all">All conditions</option>
+                  <option value="new">New stock</option>
+                  <option value="used">Used</option>
                 </select>
               </label>
               <label class="filter-field filter-field-select">
@@ -187,6 +192,6 @@
     </main>
   </div>
 
-  <script src="app.js" defer></script>
+  <script src="app.js?v=20260506-clear-data" defer></script>
 </body>
 </html>

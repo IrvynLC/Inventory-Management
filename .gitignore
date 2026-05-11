@@ -1,0 +1,5 @@
+data/*.sqlite
+data/*.sqlite-*
+backups/
+node_modules/
+*.log

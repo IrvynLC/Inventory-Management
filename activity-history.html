@@ -66,6 +66,13 @@
               <span class="nav-subtitle">Process stock-out transactions</span>
             </span>
           </a>
+          <a class="nav-link" href="relocate-stock.html">
+            <span class="nav-icon">MOV</span>
+            <span class="nav-copy">
+              <span class="nav-title">Relocate Stock</span>
+              <span class="nav-subtitle">Move items between storage locations</span>
+            </span>
+          </a>
           <a class="nav-link active" href="activity-history.html">
             <span class="nav-icon">LOG</span>
             <span class="nav-copy">
@@ -82,11 +89,10 @@
         <div class="topbar-copy">
           <p class="eyebrow">Audit and Accountability</p>
           <h2>Inventory transaction history</h2>
-          <p class="hero-copy">Review stock creation, stock-in, and stock-out activity with user accountability, item-level details, and linked handover documentation.</p>
+          <p class="hero-copy">Review stock creation, stock-in, stock-out, and relocation activity with user accountability, item-level details, and linked handover documentation.</p>
         </div>
         <div class="topbar-actions">
           <a class="button-link" href="index.html">Back to Home</a>
-          <a class="button-link" href="draw-stock.html">Draw Stocks</a>
         </div>
       </header>
 
@@ -106,6 +112,7 @@
                   <option value="create">New stock created</option>
                   <option value="stock-in">Stock added</option>
                   <option value="stock-out">Stock drawn out</option>
+                  <option value="relocate">Stock relocated</option>
                 </select>
               </label>
               <label class="filter-field filter-field-select">
@@ -160,6 +167,6 @@
     </main>
   </div>
 
-  <script src="app.js" defer></script>
+  <script src="app.js?v=20260506-clear-data" defer></script>
 </body>
 </html>

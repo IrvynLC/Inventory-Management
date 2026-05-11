@@ -66,6 +66,13 @@
               <span class="nav-subtitle">Process stock-out transactions</span>
             </span>
           </a>
+          <a class="nav-link" href="relocate-stock.html">
+            <span class="nav-icon">MOV</span>
+            <span class="nav-copy">
+              <span class="nav-title">Relocate Stock</span>
+              <span class="nav-subtitle">Move items between storage locations</span>
+            </span>
+          </a>
           <a class="nav-link" href="activity-history.html">
             <span class="nav-icon">LOG</span>
             <span class="nav-copy">
@@ -122,7 +129,7 @@
               </div>
               <label>
                 Quantity
-                <input id="stock-out-quantity" type="number" min="1" step="1" value="1" required>
+                <input id="stock-out-quantity" type="number" min="0" step="1" value="0" required>
               </label>
               <label class="custom-select-field">
                 Draw from
@@ -163,11 +170,7 @@
               Received By
               <input id="receiver-input" name="receivedBy" type="text" placeholder="Select or type receiver name" autocomplete="off" required aria-haspopup="listbox" aria-expanded="false">
               <div class="receiver-picker-list" id="receiver-picker-list" role="listbox" hidden>
-                <button type="button" class="receiver-picker-option" data-receiver-option="Project Manager">Project Manager</button>
-                <button type="button" class="receiver-picker-option" data-receiver-option="Site Supervisor">Site Supervisor</button>
-                <button type="button" class="receiver-picker-option" data-receiver-option="Storekeeper">Storekeeper</button>
-                <button type="button" class="receiver-picker-option" data-receiver-option="Technician">Technician</button>
-                <button type="button" class="receiver-picker-option" data-receiver-option="Engineer">Engineer</button>
+                <button type="button" class="receiver-picker-option" data-receiver-option="Thillai Govindarajan">Thillai Govindarajan</button>
               </div>
             </label>
           </div>
@@ -180,6 +183,6 @@
     </main>
   </div>
 
-  <script src="app.js" defer></script>
+  <script src="app.js?v=20260506-clear-data" defer></script>
 </body>
 </html>

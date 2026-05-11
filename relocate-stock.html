@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Create New Stock | Inventory Management System</title>
+  <title>Relocate Stock | Inventory Management System</title>
   <script>
     if ("scrollRestoration" in history) history.scrollRestoration = "manual";
     document.documentElement.scrollTop = 0;
@@ -20,7 +20,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
-<body data-page="create-stock">
+<body data-page="relocate-stock">
   <div class="app-shell">
     <div class="sidebar-backdrop" data-sidebar-close></div>
     <aside class="sidebar" id="app-sidebar">
@@ -31,7 +31,7 @@
         <div>
           <p class="eyebrow">Inventory Workspace</p>
           <h1>Inventory Hub</h1>
-          <p class="brand-meta">Simple daily stock control</p>
+          <p class="brand-meta">Operational stock control</p>
         </div>
       </div>
 
@@ -42,31 +42,31 @@
             <span class="nav-icon">HM</span>
             <span class="nav-copy">
               <span class="nav-title">Home</span>
-              <span class="nav-subtitle">Main actions for daily stock work</span>
+              <span class="nav-subtitle">Access core inventory workflows</span>
             </span>
           </a>
           <a class="nav-link" href="inventory.html">
             <span class="nav-icon">IM</span>
             <span class="nav-copy">
-              <span class="nav-title">View Stocks</span>
-              <span class="nav-subtitle">Open the stock register</span>
+              <span class="nav-title">Inventory</span>
+              <span class="nav-subtitle">Central stock register and availability</span>
             </span>
           </a>
           <a class="nav-link" href="add-stock.html">
             <span class="nav-icon">IN</span>
             <span class="nav-copy">
               <span class="nav-title">Add Stocks</span>
-              <span class="nav-subtitle">Receive incoming stock</span>
+              <span class="nav-subtitle">Record stock-in transactions</span>
             </span>
           </a>
           <a class="nav-link" href="draw-stock.html">
             <span class="nav-icon">OUT</span>
             <span class="nav-copy">
               <span class="nav-title">Draw Stocks</span>
-              <span class="nav-subtitle">Issue stock for use</span>
+              <span class="nav-subtitle">Process stock-out transactions</span>
             </span>
           </a>
-          <a class="nav-link" href="relocate-stock.html">
+          <a class="nav-link active" href="relocate-stock.html">
             <span class="nav-icon">MOV</span>
             <span class="nav-copy">
               <span class="nav-title">Relocate Stock</span>
@@ -77,14 +77,7 @@
             <span class="nav-icon">LOG</span>
             <span class="nav-copy">
               <span class="nav-title">Activity History</span>
-              <span class="nav-subtitle">Audit stock actions and handover forms</span>
-            </span>
-          </a>
-          <a class="nav-link active" href="create-stock.html">
-            <span class="nav-icon">NEW</span>
-            <span class="nav-copy">
-              <span class="nav-title">Create New Stock</span>
-              <span class="nav-subtitle">Add a brand-new inventory item</span>
+              <span class="nav-subtitle">Review transaction audit records</span>
             </span>
           </a>
         </div>
@@ -94,9 +87,9 @@
     <main class="main-shell">
       <header class="topbar">
         <div class="topbar-copy">
-          <p class="eyebrow">Create New Stock</p>
-          <h2>Add a new inventory item</h2>
-          <p class="hero-copy">Create a brand-new stock record with item details, stock code, unit, and storage location.</p>
+          <p class="eyebrow">Warehouse Movement</p>
+          <h2>Relocate stock</h2>
+          <p class="hero-copy">Move an existing stock record to a new storage location while keeping an audit trail of the previous and updated location.</p>
         </div>
         <div class="topbar-actions">
           <a class="button-link" href="index.html">Back to Home</a>
@@ -106,60 +99,43 @@
       <section class="panel form-panel">
         <div class="panel-header panel-header-tight">
           <div>
-            <p class="eyebrow">New Item Form</p>
-            <h3>Create inventory record</h3>
-            <p class="section-copy">Use this page when you need to add a completely new stock item to the master register.</p>
+            <p class="eyebrow">Relocation Entry</p>
+            <h3>Update item location</h3>
+            <p class="section-copy">Select the exact item record, confirm its current storage location, then enter the new warehouse location.</p>
           </div>
         </div>
-        <form id="inventory-form" class="stack-form">
+        <form id="relocate-form" class="stack-form">
           <div class="field-grid">
+            <div class="stock-picker-field">
+              <label for="relocate-stock-picker-search">Item</label>
+              <select id="relocate-item" class="stock-native-select" required tabindex="-1" aria-hidden="true"></select>
+              <div class="stock-picker" data-relocate-stock-picker>
+                <button type="button" class="stock-picker-button" id="relocate-stock-picker-button" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="stock-picker-button-title">Select an item</span>
+                  <span class="stock-picker-button-meta">Search by description, SKU, brand, or category</span>
+                </button>
+                <div class="stock-picker-popover" id="relocate-stock-picker-popover" hidden>
+                  <input id="relocate-stock-picker-search" class="stock-picker-search" type="search" placeholder="Search item, SKU, brand, or category" autocomplete="off">
+                  <div class="stock-picker-list" id="relocate-stock-picker-list" role="listbox" aria-label="Inventory items"></div>
+                </div>
+              </div>
+            </div>
             <label>
-              Brand
-              <input name="brand" type="text" placeholder="CommScope" required>
-            </label>
-            <label class="filter-field-select">
-              Category
-              <select name="modelSelect" id="create-model-select" required></select>
-            </label>
-            <label id="create-new-model-field" class="create-new-model-field" hidden>
-              Enter category
-              <input name="modelNew" id="create-model-new" type="text" placeholder="Cable / Patch Cord">
-            </label>
-            <label>
-              Description
-              <input name="name" type="text" placeholder="Cat6 UTP Cable Box 305m" required>
-            </label>
-            <label>
-              Stock code
-              <input name="sku" type="text" placeholder="SC-001" required>
+              Current location
+              <input id="relocate-current-location" type="text" readonly>
             </label>
             <label>
-              Unit
-              <input name="unit" type="text" placeholder="pcs / rolls / m" required>
+              New location
+              <input id="relocate-new-location" type="text" placeholder="Rack C-03 / D_Floor / Main Store" required>
             </label>
             <label>
-              LC Stock quantity
-              <input name="ownQuantity" type="number" min="0" step="1" value="0" required>
-            </label>
-            <label>
-              Consignment stock quantity
-              <input name="consignmentQuantity" type="number" min="0" step="1" value="0" required>
-            </label>
-            <label class="custom-select-field">
-              Condition
-              <select name="stockCondition" required>
-                <option value="new" selected>New Stock</option>
-                <option value="used">Used</option>
-              </select>
-            </label>
-            <label>
-              Location
-              <input name="location" type="text" placeholder="Main Store A-01" required>
+              Remarks
+              <input id="relocate-remarks" type="text" placeholder="Warehouse tidy / shelf rearrangement">
             </label>
           </div>
           <div class="form-actions">
-            <button type="submit" class="button-primary">Save Item</button>
-            <span class="form-hint">Enter LC Stock and consignment balances separately, or leave both as 0 if stock will be received later.</span>
+            <button type="submit" class="button-primary">Save Relocation</button>
+            <span class="form-hint">Only the storage location changes. Stock balances remain unchanged.</span>
           </div>
         </form>
       </section>
