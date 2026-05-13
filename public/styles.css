@@ -377,7 +377,7 @@ body[data-page="relocate-stock"] .sidebar-backdrop {
 }
 
 body[data-page="activity-detail"] .topbar h2 {
-  max-width: 18ch;
+  max-width: 28ch;
 }
 
 .activity-detail-overview {
@@ -1073,7 +1073,7 @@ body[data-page="relocate-stock"] .panel {
   display: grid;
   gap: 12px;
   min-width: 0;
-  max-width: 760px;
+  max-width: min(1120px, 100%);
 }
 
 .topbar-copy > * {
@@ -1164,7 +1164,7 @@ body[data-page="relocate-stock"] .panel {
 .topbar h2 {
   font-size: clamp(1.85rem, 2.6vw, 2.45rem);
   line-height: 1.12;
-  max-width: 14ch;
+  max-width: 28ch;
 }
 
 .panel h3,
@@ -3392,6 +3392,15 @@ tbody tr:hover {
 
 .toast-notice-success {
   background: linear-gradient(135deg, #ffffff 0%, #eef8f6 100%);
+}
+
+.toast-notice-error {
+  background: linear-gradient(135deg, #ffffff 0%, #fff1f2 100%);
+  border-color: rgba(190, 18, 60, 0.24);
+}
+
+.toast-notice-error .toast-notice-icon {
+  background: #be123c;
 }
 
 .confirm-modal {

@@ -1,0 +1,44 @@
+[
+  {
+    "id": "user-fenny",
+    "username": "fenny",
+    "password": "replace-with-a-strong-password",
+    "name": "Fenny",
+    "role": "Admin"
+  },
+  {
+    "id": "user-albert",
+    "username": "albert",
+    "password": "replace-with-a-strong-password",
+    "name": "Albert",
+    "role": "Admin"
+  },
+  {
+    "id": "user-zin",
+    "username": "zin",
+    "password": "replace-with-a-strong-password",
+    "name": "Zin",
+    "role": "Engineer"
+  },
+  {
+    "id": "user-irvyn",
+    "username": "irvyn",
+    "password": "replace-with-a-strong-password",
+    "name": "Irvyn",
+    "role": "Engineer"
+  },
+  {
+    "id": "user-johnson",
+    "username": "johnson",
+    "password": "replace-with-a-strong-password",
+    "name": "Johnson",
+    "role": "Administrative"
+  },
+  {
+    "id": "user-cindy",
+    "username": "cindy",
+    "password": "replace-with-a-strong-password",
+    "name": "Cindy",
+    "role": "Administrative"
+  }
+]

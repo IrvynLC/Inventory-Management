@@ -1,6 +1,6 @@
 CREATE DATABASE inventory_management;
 
-CREATE USER inventory_app WITH PASSWORD 'D3xI3ss1nLinks';
+CREATE USER inventory_app WITH PASSWORD 'replace-with-a-strong-password';
 
 GRANT ALL PRIVILEGES ON DATABASE inventory_management TO inventory_app;
 

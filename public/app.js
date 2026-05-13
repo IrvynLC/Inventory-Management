@@ -1,7 +1,5 @@
-const STORAGE_KEY = "ims-company-data-v4";
-const LEGACY_DATA_STORAGE_KEYS = ["ims-company-data-v2", "ims-company-data-v3"];
+const BUSINESS_DATA_STORAGE_KEYS = ["ims-company-data-v2", "ims-company-data-v3", "ims-company-data-v4"];
 const INVENTORY_PAGE_SIZE = 8;
-const USER_STORAGE_KEY = "ims-users-v4";
 const SESSION_STORAGE_KEY = "ims-session-user-id-v2";
 const API_DATA_ENDPOINT = "/api/data";
 const API_LOGIN_ENDPOINT = "/api/login";
@@ -9,50 +7,6 @@ const API_LOGOUT_ENDPOINT = "/api/logout";
 const API_SESSION_ENDPOINT = "/api/session";
 const API_TIMEOUT_MS = 4000;
 const PROTECTED_PAGES = new Set(["home", "inventory", "activity-history", "activity-detail", "add-stock", "draw-stock", "create-stock", "relocate-stock", "handover"]);
-const defaultUsers = [
-  {
-    id: "user-fenny",
-    username: "fenny",
-    password: "1234",
-    name: "Fenny",
-    role: "Admin"
-  },
-  {
-    id: "user-albert",
-    username: "albert",
-    password: "1234",
-    name: "Albert",
-    role: "Admin"
-  },
-  {
-    id: "user-zin",
-    username: "zin",
-    password: "1234",
-    name: "Zin",
-    role: "Engineer"
-  },
-  {
-    id: "user-irvyn",
-    username: "irvyn",
-    password: "1234",
-    name: "Irvyn",
-    role: "Engineer"
-  },
-  {
-    id: "user-johnson",
-    username: "johnson",
-    password: "1234",
-    name: "Johnson",
-    role: "Administrative"
-  },
-  {
-    id: "user-cindy",
-    username: "cindy",
-    password: "1234",
-    name: "Cindy",
-    role: "Administrative"
-  }
-];
 
 let currentUserCache = null;
 let sessionLoadPromise = null;
@@ -65,48 +19,14 @@ const defaultData = {
   relocations: []
 };
 
+let dataCache = null;
+
 function cloneData(data) {
   return JSON.parse(JSON.stringify(data));
 }
 
-function clearLegacyDataStorage() {
-  LEGACY_DATA_STORAGE_KEYS.forEach((key) => {
-    if (key !== STORAGE_KEY) {
-      localStorage.removeItem(key);
-    }
-  });
-}
-
-function cloneDefaultUsers() {
-  return defaultUsers.map((user) => ({ ...user }));
-}
-
-function loadUsers() {
-  const raw = localStorage.getItem(USER_STORAGE_KEY);
-  if (!raw) {
-    const seededUsers = cloneDefaultUsers();
-    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(seededUsers));
-    return seededUsers;
-  }
-
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || !parsed.length) {
-      throw new Error("No user records found");
-    }
-
-    return parsed.map((user, index) => ({
-      id: user.id ?? `user-${index + 1}`,
-      username: String(user.username ?? "").trim(),
-      password: String(user.password ?? ""),
-      name: String(user.name ?? user.username ?? "Unknown User").trim(),
-      role: String(user.role ?? "Inventory User").trim()
-    }));
-  } catch (error) {
-    const seededUsers = cloneDefaultUsers();
-    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(seededUsers));
-    return seededUsers;
-  }
+function clearBusinessDataStorage() {
+  BUSINESS_DATA_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
 }
 
 function getCurrentUser() {
@@ -706,6 +626,14 @@ function getNormalizedDefaultData(loadError = "") {
   };
 }
 
+function setDataCache(data, loadError = "") {
+  dataCache = normalizeDataObject(data);
+  if (loadError) {
+    dataCache.loadError = loadError;
+  }
+  return cloneData(dataCache);
+}
+
 function normalizeDataObject(data) {
   return {
     inventory: upgradeLegacyInventory(data?.inventory ?? []),
@@ -717,40 +645,11 @@ function normalizeDataObject(data) {
 }
 
 function loadData() {
-  clearLegacyDataStorage();
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) {
-    const normalizedDefaultData = getNormalizedDefaultData();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedDefaultData));
-    return cloneData(normalizedDefaultData);
+  clearBusinessDataStorage();
+  if (!dataCache) {
+    dataCache = getNormalizedDefaultData("Backend data has not loaded yet.");
   }
-
-  try {
-    const parsed = JSON.parse(raw);
-    const normalized = normalizeDataObject(parsed);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
-    return normalized;
-  } catch (error) {
-    try {
-      const parsed = JSON.parse(raw);
-      return {
-        inventory: Array.isArray(parsed.inventory) ? parsed.inventory : [],
-        adjustments: Array.isArray(parsed.adjustments) ? parsed.adjustments : [],
-        stockOuts: Array.isArray(parsed.stockOuts) ? parsed.stockOuts : [],
-        corrections: Array.isArray(parsed.corrections) ? parsed.corrections : [],
-        relocations: Array.isArray(parsed.relocations) ? parsed.relocations : [],
-        loadError: error.message
-      };
-    } catch (parseError) {
-      const normalizedDefaultData = getNormalizedDefaultData(parseError.message);
-      return cloneData(normalizedDefaultData);
-    }
-  }
-}
-
-function hasMeaningfulData(data) {
-  return ["inventory", "adjustments", "stockOuts", "corrections", "relocations"]
-    .some((key) => Array.isArray(data?.[key]) && data[key].length > 0);
+  return cloneData(dataCache);
 }
 
 async function fetchWithTimeout(url, options = {}) {
@@ -808,8 +707,7 @@ async function sendBackendAction(action, payload) {
   }
 
   if (result.data) {
-    const normalized = normalizeDataObject(result.data);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+    const normalized = setDataCache(result.data);
     backendSyncAvailable = true;
     return { ...result, data: normalized };
   }
@@ -824,7 +722,7 @@ function initializeBackendData() {
   if (backendLoadPromise) return backendLoadPromise;
 
   backendLoadPromise = (async () => {
-    const localData = loadData();
+    clearBusinessDataStorage();
 
     try {
       const response = await fetchWithTimeout(API_DATA_ENDPOINT, { cache: "no-store" });
@@ -839,20 +737,13 @@ function initializeBackendData() {
       }
 
       const payload = await response.json();
-      const serverData = normalizeDataObject(payload.data ?? payload);
-      const shouldSeedBackend = !hasMeaningfulData(serverData) && hasMeaningfulData(localData);
-      const activeData = shouldSeedBackend ? localData : serverData;
-
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(activeData));
-      if (shouldSeedBackend) {
-        await persistDataToBackend(activeData);
-      }
+      const activeData = setDataCache(payload.data ?? payload);
       backendSyncAvailable = true;
       return activeData;
     } catch (error) {
       backendSyncAvailable = false;
-      console.warn("Using browser storage because backend sync is unavailable:", error);
-      return localData;
+      console.warn("Backend sync is unavailable. Business data was not loaded from localStorage:", error);
+      return setDataCache(getNormalizedDefaultData(error.message), error.message);
     }
   })();
 
@@ -861,48 +752,31 @@ function initializeBackendData() {
 
 function saveData(data) {
   const normalized = normalizeDataObject(data);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
 
   if (backendSyncAvailable) {
     const syncPromise = persistDataToBackend(normalized);
-    syncPromise.catch((error) => {
-      backendSyncAvailable = false;
-      console.warn("Inventory changes were saved in this browser but not synced to the backend:", error);
-      showToast("Saved in this browser, but backend sync is unavailable. Ask IT to check the server.");
-    });
-    return syncPromise;
+    return syncPromise
+      .then(() => setDataCache(normalized))
+      .catch((error) => {
+        backendSyncAvailable = false;
+        console.warn("Inventory changes were not saved because backend sync is unavailable:", error);
+        showToast("Server unavailable. Inventory changes were not saved. Ask IT to check the server.", "error");
+        throw error;
+      });
   }
 
-  return Promise.resolve();
+  const error = new Error("Backend sync is unavailable. Inventory changes were not saved.");
+  showToast("Server unavailable. Inventory changes were not saved. Ask IT to check the server.", "error");
+  return Promise.reject(error);
 }
 
 function getStoredInventoryDiagnostics() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) {
-    return {
-      hasStorage: false,
-      rawLength: 0,
-      inventoryCount: 0,
-      parseError: ""
-    };
-  }
-
-  try {
-    const parsed = JSON.parse(raw);
-    return {
-      hasStorage: true,
-      rawLength: raw.length,
-      inventoryCount: Array.isArray(parsed.inventory) ? parsed.inventory.length : 0,
-      parseError: ""
-    };
-  } catch (error) {
-    return {
-      hasStorage: true,
-      rawLength: raw.length,
-      inventoryCount: 0,
-      parseError: error.message
-    };
-  }
+  return {
+    hasStorage: false,
+    rawLength: 0,
+    inventoryCount: Array.isArray(dataCache?.inventory) ? dataCache.inventory.length : 0,
+    parseError: ""
+  };
 }
 
 function resetInventoryViewState() {
@@ -2252,19 +2126,6 @@ function initLoginPage(currentUser) {
           <span class="form-hint">Your session is managed by the backend.</span>
         </div>
       </form>
-      <section class="auth-accounts">
-        <p class="eyebrow">Default Accounts</p>
-        <div class="auth-account-list">
-          ${loadUsers().map((user) => `
-            <article class="auth-account-card">
-              <strong>${escapeHtml(user.name)}</strong>
-              <span>${escapeHtml(user.role)}</span>
-              <span>Username: ${escapeHtml(user.username)}</span>
-              <span>Password: ${escapeHtml(user.password)}</span>
-            </article>
-          `).join("")}
-        </div>
-      </section>
     </section>
   `;
 
@@ -3774,7 +3635,7 @@ function renderInventoryPage() {
         hasActiveFilters
           ? "No inventory items matched your current search or filter."
           : "No inventory items yet. Add your first stock record to start operations tracking."
-      }<br><span class="muted">Storage check: ${diagnostics.inventoryCount} saved item${diagnostics.inventoryCount === 1 ? "" : "s"}${diagnostics.parseError ? ` | Data error: ${escapeHtml(diagnostics.parseError)}` : ""}${data.loadError ? ` | Load warning: ${escapeHtml(data.loadError)}` : ""}</span></div></td></tr>`;
+      }<br><span class="muted">Backend data: ${diagnostics.inventoryCount} loaded item${diagnostics.inventoryCount === 1 ? "" : "s"}${diagnostics.parseError ? ` | Data error: ${escapeHtml(diagnostics.parseError)}` : ""}${data.loadError ? ` | Load warning: ${escapeHtml(data.loadError)}` : ""}</span></div></td></tr>`;
 
   if (filteredInventory.length <= pageSize) {
     pagination.innerHTML = "";

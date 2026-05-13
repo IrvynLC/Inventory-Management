@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: ims-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-inventory_management}
+      POSTGRES_USER: ${POSTGRES_USER:-inventory_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - ims_postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-inventory_app} -d ${POSTGRES_DB:-inventory_management}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    image: inventory-management-app:latest
+    container_name: ims-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${IMS_PORT:-3000}:3000"
+    environment:
+      IMS_HOST: 0.0.0.0
+      IMS_PORT: 3000
+      IMS_PRODUCTION: "1"
+      IMS_ALLOW_WEAK_SEEDED_PASSWORDS: ${IMS_ALLOW_WEAK_SEEDED_PASSWORDS:-1}
+      IMS_SECURE_COOKIES: ${IMS_SECURE_COOKIES:-0}
+      IMS_SESSION_TTL_HOURS: ${IMS_SESSION_TTL_HOURS:-12}
+      IMS_SEED_USERS_FILE: config/users.production.json
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-inventory_management}
+      PGUSER: ${POSTGRES_USER:-inventory_app}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - ./config/users.production.json:/app/config/users.production.json:ro
+
+volumes:
+  ims_postgres_data:

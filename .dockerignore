@@ -1,0 +1,10 @@
+.git
+node_modules
+backups
+data/*.sqlite
+data/*.sqlite-*
+*.log
+frontend.err.log
+frontend.out.log
+config/users.production.json
+deploy

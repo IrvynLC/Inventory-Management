@@ -1,5 +1,7 @@
 data/*.sqlite
 data/*.sqlite-*
 backups/
+dist/
 node_modules/
 *.log
+config/users.production.json

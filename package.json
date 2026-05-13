@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "description": "Inventory Management System frontend and backend",
-  "main": "local-server.js",
+  "main": "server/local-server.js",
   "scripts": {
-    "start": "node local-server.js"
+    "start": "node server/local-server.js",
+    "db:validate": "node scripts/validate-relational-db.js"
   },
   "dependencies": {
     "pg": "^8.16.3"
