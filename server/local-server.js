@@ -106,7 +106,7 @@ const pool = new Pool({
   port: Number(process.env.PGPORT || 5432),
   database: process.env.PGDATABASE || "inventory_management",
   user: process.env.PGUSER || "inventory_app",
-  password: process.env.PGPASSWORD || "change-me",
+  password: process.env.PGPASSWORD || "D3xI3ss1nLinks",
   max: Number(process.env.PGPOOL_MAX || 10),
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000
@@ -311,6 +311,24 @@ async function initializeDatabase() {
 
     CREATE INDEX IF NOT EXISTS stock_out_items_stock_out_id_idx ON stock_out_items (stock_out_id);
     CREATE INDEX IF NOT EXISTS stock_out_items_item_id_idx ON stock_out_items (item_id);
+
+    CREATE TABLE IF NOT EXISTS stock_out_manual_items (
+      id BIGSERIAL PRIMARY KEY,
+      stock_out_id TEXT NOT NULL REFERENCES stock_outs(id) ON DELETE CASCADE,
+      description TEXT NOT NULL,
+      stock_code TEXT,
+      brand TEXT,
+      category TEXT,
+      quantity INTEGER NOT NULL DEFAULT 0,
+      unit TEXT,
+      remarks TEXT,
+      created_at TIMESTAMPTZ,
+      created_by_user_id TEXT,
+      created_by_name TEXT,
+      line_order INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS stock_out_manual_items_stock_out_id_idx ON stock_out_manual_items (stock_out_id);
 
     CREATE TABLE IF NOT EXISTS stock_relocations (
       id TEXT PRIMARY KEY,
@@ -646,6 +664,59 @@ function requireAnyRole(user, allowedRoles, message = "You do not have permissio
   }
 }
 
+function normalizeCreatableUserRole(role) {
+  const normalized = normalizeRole(role);
+  const roles = {
+    admin: "Admin",
+    engineer: "Engineer",
+    administrative: "Administrative"
+  };
+  return roles[normalized] || "";
+}
+
+function validateNewUserPayload(payload) {
+  const username = String(payload.username || "").trim().toLowerCase();
+  const password = String(payload.password || "");
+  const role = normalizeCreatableUserRole(payload.role);
+
+  if (!/^[a-z0-9._-]{3,40}$/.test(username)) {
+    throw new Error("Username must be 3-40 characters using letters, numbers, dots, underscores, or hyphens.");
+  }
+  if (!role) {
+    throw new Error("Choose a valid role: Admin, Engineer, or Administrative.");
+  }
+  if (!password) {
+    throw new Error("Enter a password.");
+  }
+
+  return { username, name: username, password, role };
+}
+
+async function createSystemUser(actor, payload) {
+  requireAnyRole(actor, ["administrative"], "Only Administrative users can create new users.");
+  const user = validateNewUserPayload(payload);
+  const id = `user-${user.username}-${crypto.randomUUID().slice(0, 8)}`;
+
+  try {
+    const result = await pool.query(
+      `
+        INSERT INTO users (id, username, password_hash, name, role)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, username, name, role
+      `,
+      [id, user.username, createPasswordHash(user.password), user.name, user.role]
+    );
+    return { ok: true, user: sanitizeUser(result.rows[0]) };
+  } catch (error) {
+    if (error.code === "23505") {
+      const conflict = new Error("That username is already in use.");
+      conflict.statusCode = 409;
+      throw conflict;
+    }
+    throw error;
+  }
+}
+
 async function loadStateFromRelational(client = pool) {
   const inventoryResult = await client.query(`
       SELECT *
@@ -665,6 +736,11 @@ async function loadStateFromRelational(client = pool) {
   const stockOutItemResult = await client.query(`
       SELECT *
       FROM stock_out_items
+      ORDER BY stock_out_id, line_order, id
+    `);
+  const stockOutManualItemResult = await client.query(`
+      SELECT *
+      FROM stock_out_manual_items
       ORDER BY stock_out_id, line_order, id
     `);
   const relocationResult = await client.query(`
@@ -697,6 +773,23 @@ async function loadStateFromRelational(client = pool) {
       consignmentBalanceAfter: row.consignment_balance_after === null ? undefined : Number(row.consignment_balance_after),
       consignmentToRestock: row.consignment_to_restock === null ? undefined : Number(row.consignment_to_restock),
       itemSnapshot: row.item_snapshot
+    }));
+    return groups;
+  }, new Map());
+
+  const stockOutManualItemsByRecord = stockOutManualItemResult.rows.reduce((groups, row) => {
+    if (!groups.has(row.stock_out_id)) groups.set(row.stock_out_id, []);
+    groups.get(row.stock_out_id).push(compactObject({
+      description: row.description,
+      stockCode: row.stock_code,
+      brand: row.brand,
+      category: row.category,
+      quantity: Number(row.quantity ?? 0),
+      unit: row.unit,
+      remarks: row.remarks,
+      createdAt: toIsoValue(row.created_at),
+      createdByUserId: row.created_by_user_id,
+      createdByName: row.created_by_name
     }));
     return groups;
   }, new Map());
@@ -769,6 +862,7 @@ async function loadStateFromRelational(client = pool) {
       id: row.id,
       documentNo: row.document_no,
       items: stockOutItemsByRecord.get(row.id) ?? [],
+      manualItems: stockOutManualItemsByRecord.get(row.id) ?? [],
       projectTitle: row.project_title,
       receivedBy: row.received_by,
       createdAt: toIsoValue(row.created_at),
@@ -807,6 +901,7 @@ async function replaceRelationalState(client, data) {
   await client.query("DELETE FROM activity_correction_items");
   await client.query("DELETE FROM activity_corrections");
   await client.query("DELETE FROM stock_relocations");
+  await client.query("DELETE FROM stock_out_manual_items");
   await client.query("DELETE FROM stock_out_items");
   await client.query("DELETE FROM stock_outs");
   await client.query("DELETE FROM stock_adjustments");
@@ -915,6 +1010,32 @@ async function replaceRelationalState(client, data) {
           line.consignmentBalanceAfter ?? null,
           line.consignmentToRestock ?? null,
           JSON.stringify(toJsonValue(line.itemSnapshot)),
+          index
+        ]
+      );
+    }
+
+    for (const [index, line] of (stockOut.manualItems ?? []).entries()) {
+      await client.query(
+        `
+          INSERT INTO stock_out_manual_items (
+            stock_out_id, description, stock_code, brand, category, quantity, unit,
+            remarks, created_at, created_by_user_id, created_by_name, line_order
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        `,
+        [
+          stockOut.id,
+          line.description ?? line.name ?? "",
+          line.stockCode ?? line.sku ?? null,
+          line.brand ?? null,
+          line.category ?? line.model ?? null,
+          Number(line.quantity ?? 0),
+          line.unit ?? null,
+          line.remarks ?? null,
+          toTimestampValue(line.createdAt ?? stockOut.createdAt),
+          line.createdByUserId ?? stockOut.createdByUserId ?? null,
+          line.createdByName ?? stockOut.createdByName ?? null,
           index
         ]
       );
@@ -1162,6 +1283,32 @@ async function insertStockOut(client, stockOut) {
         line.consignmentBalanceAfter ?? null,
         line.consignmentToRestock ?? null,
         JSON.stringify(toJsonValue(line.itemSnapshot)),
+        index
+      ]
+    );
+  }
+
+  for (const [index, line] of (stockOut.manualItems ?? []).entries()) {
+    await client.query(
+      `
+        INSERT INTO stock_out_manual_items (
+          stock_out_id, description, stock_code, brand, category, quantity, unit,
+          remarks, created_at, created_by_user_id, created_by_name, line_order
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `,
+      [
+        stockOut.id,
+        line.description ?? "",
+        line.stockCode ?? null,
+        line.brand ?? null,
+        line.category ?? null,
+        Number(line.quantity ?? 0),
+        line.unit ?? null,
+        line.remarks ?? null,
+        toTimestampValue(line.createdAt ?? stockOut.createdAt),
+        line.createdByUserId ?? stockOut.createdByUserId ?? null,
+        line.createdByName ?? stockOut.createdByName ?? null,
         index
       ]
     );
@@ -1539,6 +1686,16 @@ function toCleanText(value, fallback = "") {
   return text || fallback;
 }
 
+function toCleanMultilineText(value, fallback = "") {
+  const text = String(value ?? "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/g, ""))
+    .join("\n")
+    .trim();
+  return text || fallback;
+}
+
 function toNonNegativeInt(value) {
   const number = Math.floor(Number(value ?? 0));
   return Number.isFinite(number) && number > 0 ? number : 0;
@@ -1762,8 +1919,27 @@ async function handleDrawStockAction(user, payload) {
     const projectTitle = toCleanText(payload.projectTitle);
     const receivedBy = toCleanText(payload.receivedBy);
     const lines = Array.isArray(payload.lines) ? payload.lines : [];
+    const manualItems = Array.isArray(payload.manualItems) ? payload.manualItems : [];
     if (!projectTitle || !receivedBy) throw new Error("Complete project and receiver details before saving.");
-    if (!lines.length) throw new Error("Add at least one stock-out item with a valid quantity.");
+    if (!lines.length && !manualItems.length) throw new Error("Add at least one stock-out item with a valid quantity.");
+
+    const manualIssuedItems = manualItems.map((line) => {
+      const description = toCleanText(line.description ?? line.name);
+      const quantity = toNonNegativeInt(line.quantity);
+      if (!description || quantity <= 0) throw new Error("One of the additional handover items is invalid.");
+      return {
+        description,
+        stockCode: toCleanText(line.stockCode ?? line.sku) || null,
+        brand: toCleanText(line.brand) || null,
+        category: toCleanText(line.category ?? line.model) || null,
+        quantity,
+        unit: toCleanText(line.unit) || null,
+        remarks: toCleanMultilineText(line.remarks) || null,
+        createdAt: timestamp,
+        createdByUserId: user.id,
+        createdByName: user.name
+      };
+    });
 
     const requestedByItemAndSource = new Map();
     lines.forEach((line) => {
@@ -1839,6 +2015,7 @@ async function handleDrawStockAction(user, payload) {
       id: crypto.randomUUID(),
       documentNo: getNextHandoverDocumentNo(data, timestamp),
       items: issuedItems,
+      manualItems: manualIssuedItems,
       projectTitle,
       receivedBy,
       createdAt: timestamp,
@@ -2095,6 +2272,7 @@ async function handleCorrectActivityAction(user, payload) {
       });
     } else {
       for (const [index, original] of record.itemRows.entries()) {
+        if (!original?.itemId) continue;
         const item = data.inventory.find((entry) => entry.id === original?.itemId);
         if (!original || !item) throw new Error("One of the correction items could not be found in inventory.");
 
@@ -2128,7 +2306,7 @@ async function handleCorrectActivityAction(user, payload) {
           consignmentDelta = Number(original.consignmentQuantity ?? 0) - correctedConsignmentQuantity;
         }
 
-        if (!ownDelta && !consignmentDelta) return;
+        if (!ownDelta && !consignmentDelta) continue;
 
         const currentOwn = Number(item.ownQuantity ?? item.quantity ?? 0);
         const currentConsignment = Number(item.consignmentQuantity ?? 0);
@@ -2276,6 +2454,19 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/logout" && req.method === "POST") {
     await destroySession(req, res);
     sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (pathname === "/api/users" && req.method === "POST") {
+    const actor = await requireSessionUser(req, res);
+    if (!actor) return;
+    try {
+      const body = await readRequestBody(req, 1024 * 64);
+      const parsed = JSON.parse(body || "{}");
+      sendJson(res, 201, await createSystemUser(actor, parsed));
+    } catch (error) {
+      sendJson(res, error.statusCode || 400, { ok: false, error: error.message });
+    }
     return;
   }
 

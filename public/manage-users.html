@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Create User | Inventory Management System</title>
+  <script>
+    if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    window.scrollTo(0, 0);
+    window.addEventListener("load", () => {
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      window.scrollTo(0, 0);
+    });
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css?v=20260529-manage-users-layout">
+</head>
+<body data-page="manage-users">
+  <main class="manage-users-shell main-shell">
+    <header class="manage-users-header">
+      <div class="topbar-copy">
+        <p class="breadcrumb"><a href="index.html">Home</a><span>&gt;</span><span>Create User</span></p>
+        <h2>Create User</h2>
+        <p class="hero-copy">Add a new system account and assign the correct role for inventory workflows.</p>
+      </div>
+      <div class="topbar-actions">
+        <a class="button-link" href="index.html">Back to Home</a>
+      </div>
+    </header>
+
+    <form id="create-user-form" class="stack-form">
+      <section class="panel form-panel">
+        <div class="panel-header panel-header-tight">
+          <div>
+            <h3>User Details</h3>
+            <p class="section-copy">Only Administrative users can create accounts.</p>
+          </div>
+        </div>
+        <div class="field-grid">
+          <label>
+            Username
+            <input name="username" type="text" autocomplete="username" placeholder="jane.tan" pattern="[A-Za-z0-9._-]{3,40}" required>
+          </label>
+          <label>
+            Role
+            <select name="role" required>
+              <option value="" disabled selected>Select a role</option>
+              <option value="Admin">Admin</option>
+              <option value="Engineer">Engineer</option>
+              <option value="Administrative">Administrative</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel form-panel">
+        <div class="panel-header panel-header-tight">
+          <div>
+            <h3>Temporary Password</h3>
+            <p class="section-copy">Enter a temporary password for the first sign-in.</p>
+          </div>
+        </div>
+        <div class="field-grid auth-grid">
+          <label>
+            Password
+            <input name="password" type="password" autocomplete="new-password" required>
+          </label>
+          <label>
+            Confirm password
+            <input name="confirmPassword" type="password" autocomplete="new-password" required>
+          </label>
+        </div>
+      </section>
+
+      <div class="form-actions">
+        <button type="submit" class="button-primary">Create User</button>
+        <span class="form-hint">The new account becomes active immediately after it is created.</span>
+      </div>
+    </form>
+  </main>
+
+  <script src="app.js?v=20260602-create-users" defer></script>
+</body>
+</html>

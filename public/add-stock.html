@@ -19,6 +19,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="stock-workflow.css">
 </head>
 <body data-page="add-stock">
   <div class="app-shell">
@@ -87,8 +88,8 @@
     <main class="main-shell">
       <header class="topbar">
         <div class="topbar-copy">
-          <p class="eyebrow">Stock Receiving</p>
-          <h2>Add stock to inventory</h2>
+          <p class="breadcrumb"><a href="inventory.html">Inventory</a><span>&gt;</span><span>Add Stock</span></p>
+          <h2>Add Stock</h2>
           <p class="hero-copy">Record received items and update the correct balance for LC Stock or consignment stock.</p>
         </div>
         <div class="topbar-actions">
@@ -97,19 +98,13 @@
         </div>
       </header>
 
-      <section class="panel form-panel">
-        <div class="panel-header panel-header-tight">
-          <div>
-            <p class="eyebrow">Stock-In Entry</p>
-            <h3>Update existing stock records</h3>
-            <p class="section-copy">Select an item, enter the received quantity, and choose where the stock should be added.</p>
-          </div>
-        </div>
-        <form id="adjustment-form" class="stack-form">
-          <div class="panel-header panel-header-tight stock-out-lines-header">
+      <form id="adjustment-form" class="stack-form stock-workflow add-stock-workflow">
+        <section class="panel form-panel stock-workflow-step-panel">
+          <div class="panel-header panel-header-tight stock-workflow-step-header">
+            <span class="stock-workflow-step-number">1</span>
             <div>
-              <p class="eyebrow">Stock-In Lines</p>
-              <p class="section-copy">Add each received item to the list before confirming the stock update.</p>
+              <h3>Receiving Details</h3>
+              <p class="section-copy">Select an item, enter the received quantity, and choose where the stock should be added.</p>
             </div>
           </div>
           <div class="stock-out-builder">
@@ -132,7 +127,7 @@
                 Quantity
                 <input id="adjust-quantity" type="number" min="1" step="1" value="1" required>
               </label>
-              <label>
+              <label class="custom-select-field">
                 Receiving purpose
                 <select id="adjust-stock-type" required>
                   <option value="own">LC Stock</option>
@@ -141,6 +136,16 @@
               </label>
               <button type="button" class="button-link stock-out-add-button" id="add-adjustment-line">Add to List</button>
               <div id="adjust-consignment-restock-notice" class="stock-restock stock-restock-alert add-stock-restock-notice" hidden></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel form-panel stock-workflow-step-panel">
+          <div class="panel-header panel-header-tight stock-workflow-step-header">
+            <span class="stock-workflow-step-number">2</span>
+            <div>
+              <h3>Stock-In Lines</h3>
+              <p class="section-copy">Add each received item to the list before confirming the stock update.</p>
             </div>
           </div>
           <div class="stock-out-list">
@@ -163,12 +168,13 @@
             <div id="adjustment-empty" class="empty-state">No items added yet. Build your stock-in list above.</div>
             <div id="adjustment-summary" class="table-summary"></div>
           </div>
-          <div class="form-actions">
-            <button type="submit" class="button-secondary">Add Stock</button>
-            <span class="form-hint">Choose LC Stock for company stock, or Consignment Stock when replenishing supplier-owned stock.</span>
-          </div>
-        </form>
-      </section>
+        </section>
+
+        <div class="form-actions stock-workflow-submit-row">
+          <button type="submit" class="button-primary">Add Stock</button>
+          <span class="form-hint">Choose LC Stock for company stock, or Consignment Stock when replenishing supplier-owned stock.</span>
+        </div>
+      </form>
     </main>
   </div>
 

@@ -87,8 +87,8 @@
     <main class="main-shell">
       <header class="topbar">
         <div class="topbar-copy">
-          <p class="eyebrow">Audit and Accountability</p>
-          <h2>Inventory transaction history</h2>
+          <p class="breadcrumb"><a href="inventory.html">Inventory</a><span>&gt;</span><span>Activity History</span></p>
+          <h2>Activity History</h2>
           <p class="hero-copy">Review stock creation, stock-in, stock-out, and relocation activity with user accountability, item-level details, and linked handover documentation.</p>
         </div>
         <div class="topbar-actions">
@@ -96,15 +96,19 @@
         </div>
       </header>
 
-      <section class="panel">
+      <section class="panel" id="activity-history-filters-card">
         <div class="panel-header">
-          <div>
-            <p class="eyebrow">Audit Filters</p>
-            <h3>Transaction audit trail</h3>
-            <p class="section-copy">Filter inventory activity by transaction type, user, and date range to support operational review and traceability.</p>
-          </div>
           <div class="register-toolbar">
             <div class="table-filters" aria-label="Activity filters">
+              <label class="filter-field activity-search-field">
+                <span class="filter-label">Search</span>
+                <input
+                  id="activity-search"
+                  type="search"
+                  placeholder="Search activity, item, user, details, or form"
+                  autocomplete="off"
+                >
+              </label>
               <label class="filter-field filter-field-select">
                 <span class="filter-label">Activity Type</span>
                 <select id="activity-type-filter">
@@ -142,10 +146,12 @@
                 <button class="button-link filter-reset" type="button" id="activity-clear-filters">Clear Filters</button>
               </div>
             </div>
-            <div id="activity-history-summary" class="table-summary"></div>
           </div>
         </div>
+      </section>
 
+      <section class="panel" id="activity-history-card">
+        <div id="activity-history-summary" class="table-summary activity-table-summary"></div>
         <div class="table-wrap elevated-table">
           <table>
             <thead>
@@ -167,6 +173,6 @@
     </main>
   </div>
 
-  <script src="app.js?v=20260506-clear-data" defer></script>
+  <script src="app.js?v=20260603-formal-handover-pages-v3" defer></script>
 </body>
 </html>

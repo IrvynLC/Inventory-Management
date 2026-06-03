@@ -19,6 +19,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="activity-detail.css">
 </head>
 <body data-page="activity-detail">
   <div class="app-shell">
@@ -31,7 +32,7 @@
         <div>
           <p class="eyebrow">Inventory Workspace</p>
           <h1>Inventory Hub</h1>
-          <p class="brand-meta">Simple daily stock control</p>
+          <p class="brand-meta">Operational stock control</p>
         </div>
       </div>
 
@@ -42,21 +43,28 @@
             <span class="nav-icon">HM</span>
             <span class="nav-copy">
               <span class="nav-title">Home</span>
-              <span class="nav-subtitle">Main actions for daily stock work</span>
+              <span class="nav-subtitle">Access core inventory workflows</span>
             </span>
           </a>
           <a class="nav-link" href="inventory.html">
             <span class="nav-icon">IM</span>
             <span class="nav-copy">
               <span class="nav-title">Inventory</span>
-              <span class="nav-subtitle">Overview and stock register</span>
+              <span class="nav-subtitle">Central stock register and availability</span>
             </span>
           </a>
-          <a class="nav-link" href="activity-history.html">
-            <span class="nav-icon">LOG</span>
+          <a class="nav-link" href="add-stock.html">
+            <span class="nav-icon">IN</span>
             <span class="nav-copy">
-              <span class="nav-title">Activity History</span>
-              <span class="nav-subtitle">Audit stock actions and handover forms</span>
+              <span class="nav-title">Add Stocks</span>
+              <span class="nav-subtitle">Record stock-in transactions</span>
+            </span>
+          </a>
+          <a class="nav-link" href="draw-stock.html">
+            <span class="nav-icon">OUT</span>
+            <span class="nav-copy">
+              <span class="nav-title">Draw Stocks</span>
+              <span class="nav-subtitle">Process stock-out transactions</span>
             </span>
           </a>
           <a class="nav-link" href="relocate-stock.html">
@@ -66,11 +74,11 @@
               <span class="nav-subtitle">Move items between storage locations</span>
             </span>
           </a>
-          <a class="nav-link active" href="activity-detail.html">
-            <span class="nav-icon">DET</span>
+          <a class="nav-link active" href="activity-history.html">
+            <span class="nav-icon">LOG</span>
             <span class="nav-copy">
-              <span class="nav-title">Activity Detail</span>
-              <span class="nav-subtitle">Review a detailed transaction breakdown</span>
+              <span class="nav-title">Activity History</span>
+              <span class="nav-subtitle">Review transaction audit records</span>
             </span>
           </a>
         </div>
@@ -80,8 +88,8 @@
     <main class="main-shell">
       <header class="topbar">
         <div class="topbar-copy">
-          <p class="eyebrow">Record Detail</p>
-          <h2>Detailed activity transaction breakdown</h2>
+          <p class="breadcrumb"><a href="inventory.html">Inventory</a><span>&gt;</span><a href="activity-history.html">Activity History</a><span>&gt;</span><span>Activity Detail</span></p>
+          <h2>Activity Detail</h2>
           <p class="hero-copy">Open a full record view to review timestamps, accountability details, and item-level quantity information.</p>
         </div>
         <div class="topbar-actions">

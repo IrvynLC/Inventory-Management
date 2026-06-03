@@ -19,6 +19,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="stock-workflow.css">
 </head>
 <body data-page="create-stock">
   <div class="app-shell">
@@ -31,7 +32,7 @@
         <div>
           <p class="eyebrow">Inventory Workspace</p>
           <h1>Inventory Hub</h1>
-          <p class="brand-meta">Simple daily stock control</p>
+          <p class="brand-meta">Operational stock control</p>
         </div>
       </div>
 
@@ -42,28 +43,28 @@
             <span class="nav-icon">HM</span>
             <span class="nav-copy">
               <span class="nav-title">Home</span>
-              <span class="nav-subtitle">Main actions for daily stock work</span>
+              <span class="nav-subtitle">Access core inventory workflows</span>
             </span>
           </a>
           <a class="nav-link" href="inventory.html">
             <span class="nav-icon">IM</span>
             <span class="nav-copy">
-              <span class="nav-title">View Stocks</span>
-              <span class="nav-subtitle">Open the stock register</span>
+              <span class="nav-title">Inventory</span>
+              <span class="nav-subtitle">Central stock register and availability</span>
             </span>
           </a>
-          <a class="nav-link" href="add-stock.html">
+          <a class="nav-link active" href="add-stock.html">
             <span class="nav-icon">IN</span>
             <span class="nav-copy">
               <span class="nav-title">Add Stocks</span>
-              <span class="nav-subtitle">Receive incoming stock</span>
+              <span class="nav-subtitle">Record stock-in transactions</span>
             </span>
           </a>
           <a class="nav-link" href="draw-stock.html">
             <span class="nav-icon">OUT</span>
             <span class="nav-copy">
               <span class="nav-title">Draw Stocks</span>
-              <span class="nav-subtitle">Issue stock for use</span>
+              <span class="nav-subtitle">Process stock-out transactions</span>
             </span>
           </a>
           <a class="nav-link" href="relocate-stock.html">
@@ -77,14 +78,7 @@
             <span class="nav-icon">LOG</span>
             <span class="nav-copy">
               <span class="nav-title">Activity History</span>
-              <span class="nav-subtitle">Audit stock actions and handover forms</span>
-            </span>
-          </a>
-          <a class="nav-link active" href="create-stock.html">
-            <span class="nav-icon">NEW</span>
-            <span class="nav-copy">
-              <span class="nav-title">Create New Stock</span>
-              <span class="nav-subtitle">Add a brand-new inventory item</span>
+              <span class="nav-subtitle">Review transaction audit records</span>
             </span>
           </a>
         </div>
@@ -94,8 +88,8 @@
     <main class="main-shell">
       <header class="topbar">
         <div class="topbar-copy">
-          <p class="eyebrow">Create New Stock</p>
-          <h2>Add a new inventory item</h2>
+          <p class="breadcrumb"><a href="inventory.html">Inventory</a><span>&gt;</span><a href="add-stock.html">Add Stock</a><span>&gt;</span><span>Create New Stock</span></p>
+          <h2>Create New Stock</h2>
           <p class="hero-copy">Create a brand-new stock record with item details, stock code, unit, and storage location.</p>
         </div>
         <div class="topbar-actions">
@@ -103,15 +97,15 @@
         </div>
       </header>
 
-      <section class="panel form-panel">
-        <div class="panel-header panel-header-tight">
-          <div>
-            <p class="eyebrow">New Item Form</p>
-            <h3>Create inventory record</h3>
-            <p class="section-copy">Use this page when you need to add a completely new stock item to the master register.</p>
+      <form id="inventory-form" class="stack-form stock-workflow create-stock-workflow">
+        <section class="panel form-panel stock-workflow-step-panel">
+          <div class="panel-header panel-header-tight stock-workflow-step-header">
+            <span class="stock-workflow-step-number">1</span>
+            <div>
+              <h3>Item Identity</h3>
+              <p class="section-copy">Capture the brand, category, description, and stock code for the new master item.</p>
+            </div>
           </div>
-        </div>
-        <form id="inventory-form" class="stack-form">
           <div class="field-grid">
             <label>
               Brand
@@ -133,6 +127,18 @@
               Stock code
               <input name="sku" type="text" placeholder="SC-001" required>
             </label>
+          </div>
+        </section>
+
+        <section class="panel form-panel stock-workflow-step-panel">
+          <div class="panel-header panel-header-tight stock-workflow-step-header">
+            <span class="stock-workflow-step-number">2</span>
+            <div>
+              <h3>Opening Stock</h3>
+              <p class="section-copy">Set the starting LC Stock and consignment quantities for this inventory item.</p>
+            </div>
+          </div>
+          <div class="field-grid create-stock-balance-grid">
             <label>
               Unit
               <input name="unit" type="text" placeholder="pcs / rolls / m" required>
@@ -145,6 +151,18 @@
               Consignment stock quantity
               <input name="consignmentQuantity" type="number" min="0" step="1" value="0" required>
             </label>
+          </div>
+        </section>
+
+        <section class="panel form-panel stock-workflow-step-panel">
+          <div class="panel-header panel-header-tight stock-workflow-step-header">
+            <span class="stock-workflow-step-number">3</span>
+            <div>
+              <h3>Condition and Location</h3>
+              <p class="section-copy">Finish the new record with stock condition and storage location.</p>
+            </div>
+          </div>
+          <div class="field-grid create-stock-location-grid">
             <label class="custom-select-field">
               Condition
               <select name="stockCondition" required>
@@ -157,12 +175,13 @@
               <input name="location" type="text" placeholder="Main Store A-01" required>
             </label>
           </div>
-          <div class="form-actions">
-            <button type="submit" class="button-primary">Save Item</button>
-            <span class="form-hint">Enter LC Stock and consignment balances separately, or leave both as 0 if stock will be received later.</span>
-          </div>
-        </form>
-      </section>
+        </section>
+
+        <div class="form-actions stock-workflow-submit-row">
+          <button type="submit" class="button-primary">Save Item</button>
+          <span class="form-hint">Enter LC Stock and consignment balances separately, or leave both as 0 if stock will be received later.</span>
+        </div>
+      </form>
     </main>
   </div>
 

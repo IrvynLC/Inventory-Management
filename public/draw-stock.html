@@ -87,8 +87,8 @@
     <main class="main-shell">
       <header class="topbar">
         <div class="topbar-copy">
-          <p class="eyebrow">Stock-Out Control</p>
-          <h2>Stock issuance and handover management</h2>
+          <p class="breadcrumb"><a href="inventory.html">Inventory</a><span>&gt;</span><span>Draw Stock</span></p>
+          <h2>Draw Stock</h2>
           <p class="hero-copy">Issue materials through a controlled withdrawal process, track LC Stock and consignment usage, and generate handover documentation for accountability.</p>
         </div>
         <div class="topbar-actions">
@@ -96,19 +96,13 @@
         </div>
       </header>
 
-      <section class="panel form-panel">
-        <div class="panel-header panel-header-tight">
-          <div>
-            <p class="eyebrow">Issuance Entry</p>
-            <h3>Register stock-out transactions</h3>
-            <p class="section-copy">Select available stock items, confirm issue quantities, and capture recipient details before completing the withdrawal record.</p>
-          </div>
-        </div>
-        <form id="stock-out-form" class="stack-form">
-          <div class="panel-header panel-header-tight stock-out-lines-header">
+      <form id="stock-out-form" class="stack-form draw-stock-workflow">
+        <section class="panel form-panel draw-stock-step-panel">
+          <div class="panel-header panel-header-tight draw-stock-step-header">
+            <span class="draw-stock-step-number">1</span>
             <div>
-              <p class="eyebrow">Issue Lines</p>
-              <p class="section-copy">Build the issue list by item and quantity before submitting the stock-out transaction.</p>
+              <h3>Issue Details</h3>
+              <p class="section-copy">Select stock items, specify quantity, and choose source before adding to the issue list.</p>
             </div>
           </div>
           <div class="stock-out-builder">
@@ -129,7 +123,7 @@
               </div>
               <label>
                 Quantity
-                <input id="stock-out-quantity" type="number" min="0" step="1" value="0" required>
+                <input id="stock-out-quantity" type="number" min="1" step="1" value="1" required>
               </label>
               <label class="custom-select-field">
                 Draw from
@@ -139,6 +133,59 @@
                 </select>
               </label>
               <button type="button" class="button-link stock-out-add-button" id="add-stock-out-line">Add to Issue List</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel form-panel draw-stock-step-panel">
+          <div class="panel-header panel-header-tight draw-stock-step-header">
+            <span class="draw-stock-step-number">2</span>
+            <div>
+              <h3>Additional Handover Items</h3>
+              <p class="section-copy">Add non-inventory items that should appear on the handover form without changing stock balances.</p>
+            </div>
+          </div>
+          <div class="stock-out-builder">
+            <div class="stock-out-builder-grid">
+              <label>
+                Description
+                <input id="manual-stock-description" type="text" placeholder="Item description">
+              </label>
+              <label>
+                Stock Code
+                <input id="manual-stock-code" type="text" placeholder="Optional">
+              </label>
+              <label>
+                Brand
+                <input id="manual-stock-brand" type="text" placeholder="Optional">
+              </label>
+              <label>
+                Category
+                <input id="manual-stock-category" type="text" placeholder="Optional">
+              </label>
+              <label>
+                Quantity
+                <input id="manual-stock-quantity" type="number" min="1" step="1" value="1">
+              </label>
+              <label>
+                Unit
+                <input id="manual-stock-unit" type="text" placeholder="pcs">
+              </label>
+              <label class="manual-stock-remarks-field">
+                Remarks
+                <textarea id="manual-stock-remarks" rows="3" placeholder="Optional"></textarea>
+              </label>
+              <button type="button" class="button-link stock-out-add-button" id="add-manual-stock-line">Add Additional Item</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel form-panel draw-stock-step-panel">
+          <div class="panel-header panel-header-tight draw-stock-step-header">
+            <span class="draw-stock-step-number">3</span>
+            <div>
+              <h3>Issue Lines</h3>
+              <p class="section-copy">Review the items and quantities before submitting the stock-out transaction.</p>
             </div>
           </div>
           <div class="stock-out-list">
@@ -152,14 +199,37 @@
                     <th>Draw From</th>
                     <th>Qty to Issue</th>
                     <th>Unit</th>
+                    <th>Remarks</th>
                     <th>Action</th>
                   </tr>
                 </thead>
                 <tbody id="stock-out-lines"></tbody>
               </table>
             </div>
-            <div id="stock-out-empty" class="empty-state">No items added yet. Build your issue list above.</div>
+            <div id="stock-out-empty" class="empty-state stock-out-empty-state">
+              <div class="stock-out-empty-icon" aria-hidden="true">
+                <svg viewBox="0 0 48 48">
+                  <path d="M10 17.5 24 10l14 7.5v15L24 40 10 32.5v-15Z"/>
+                  <path d="M24 25 10.7 18"/>
+                  <path d="M24 25v14.5"/>
+                  <path d="m24 25 13.3-7"/>
+                  <path d="m17 14 14 7.5"/>
+                </svg>
+              </div>
+              <strong>No items added yet</strong>
+              <span>Search and add items above to build your issue list.</span>
+            </div>
             <div id="stock-out-summary" class="table-summary"></div>
+          </div>
+        </section>
+
+        <section class="panel form-panel draw-stock-step-panel">
+          <div class="panel-header panel-header-tight draw-stock-step-header">
+            <span class="draw-stock-step-number">4</span>
+            <div>
+              <h3>Additional Information</h3>
+              <p class="section-copy">Provide receiving details and reference information.</p>
+            </div>
           </div>
           <div class="field-grid">
             <label>
@@ -174,15 +244,16 @@
               </div>
             </label>
           </div>
-          <div class="form-actions">
-            <button type="submit" class="button-primary">Withdraw Stock</button>
-            <span class="form-hint">A printable handover form will open automatically after the withdrawal is saved.</span>
-          </div>
-        </form>
-      </section>
+        </section>
+
+        <div class="form-actions draw-stock-submit-row">
+          <button type="submit" class="button-primary">Withdraw Stock</button>
+          <span class="form-hint">A printable handover form will open automatically after the withdrawal is saved.</span>
+        </div>
+      </form>
     </main>
   </div>
 
-  <script src="app.js?v=20260506-clear-data" defer></script>
+  <script src="app.js?v=20260603-handover-remarks-v2" defer></script>
 </body>
 </html>

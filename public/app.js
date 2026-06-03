@@ -5,8 +5,9 @@ const API_DATA_ENDPOINT = "/api/data";
 const API_LOGIN_ENDPOINT = "/api/login";
 const API_LOGOUT_ENDPOINT = "/api/logout";
 const API_SESSION_ENDPOINT = "/api/session";
+const API_USERS_ENDPOINT = "/api/users";
 const API_TIMEOUT_MS = 4000;
-const PROTECTED_PAGES = new Set(["home", "inventory", "activity-history", "activity-detail", "add-stock", "draw-stock", "create-stock", "relocate-stock", "handover"]);
+const PROTECTED_PAGES = new Set(["home", "inventory", "activity-history", "activity-detail", "add-stock", "draw-stock", "create-stock", "relocate-stock", "handover", "manage-users"]);
 
 let currentUserCache = null;
 let sessionLoadPromise = null;
@@ -98,6 +99,9 @@ function canAccessPage(page, user) {
   if (page === "draw-stock") {
     return role !== "admin";
   }
+  if (page === "manage-users") {
+    return role === "administrative";
+  }
 
   return true;
 }
@@ -136,6 +140,7 @@ function canAccessHref(href, user) {
     "activity-history.html": "activity-history",
     "activity-detail.html": "activity-detail",
     "handover.html": "handover",
+    "manage-users.html": "manage-users",
     "add-stock.html": "add-stock",
     "create-stock.html": "create-stock",
     "relocate-stock.html": "relocate-stock",
@@ -442,7 +447,7 @@ function renderInventoryBalanceCell(item) {
     <div class="stock-balance-cell${hasConsign ? "" : " stock-balance-cell-single"}">
       <div class="stock-total">
         <strong>${total}</strong>
-        <span>${escapeHtml(item.unit ?? "units")} total</span>
+        <span>${escapeHtml(formatUnitDisplay(item.unit ?? "units"))} total</span>
       </div>
       ${splitMarkup}
     </div>
@@ -457,12 +462,39 @@ function renderConsignmentRestockCell(item) {
   `;
 }
 
+function getInventoryStatus(item) {
+  const quantity = Number(item.quantity ?? 0);
+  const reorderLevel = Number(item.reorderLevel ?? 0);
+  if (quantity <= 0) {
+    return { key: "out", label: "Out of Stock" };
+  }
+  if (quantity < 10 || (reorderLevel > 0 && quantity <= reorderLevel)) {
+    return { key: "low", label: "Low Stock" };
+  }
+  return { key: "in", label: "In Stock" };
+}
+
+function renderInventoryStatusBadge(item) {
+  const status = getInventoryStatus(item);
+  return `<span class="inventory-status inventory-status-${status.key}">${escapeHtml(status.label)}</span>`;
+}
+
+function renderInventoryKpiIcon(type) {
+  const icons = {
+    items: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5v-9Z"/><path d="M12 12 4.4 7.7"/><path d="M12 12v8.5"/><path d="m12 12 7.6-4.3"/></svg>`,
+    low: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.8 20h18.4L12 3Z"/><path d="M12 9v5"/><path d="M12 17.5h.01"/></svg>`,
+    out: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 8.5 7 7"/><path d="m15.5 8.5-7 7"/></svg>`
+  };
+  return `<span class="inventory-kpi-icon" aria-hidden="true">${icons[type] ?? icons.items}</span>`;
+}
+
 function getReceivingPurposeLabel(purpose) {
   if (purpose === "consignment") return "Consignment Stock";
   return "LC Stock";
 }
 
 function formatStockPurposeLabel(purpose) {
+  if (purpose === "manual") return "Additional";
   if (purpose === "consignment") return "Consignment";
   return "LC Stock";
 }
@@ -715,6 +747,29 @@ async function sendBackendAction(action, payload) {
   return result;
 }
 
+async function createSystemUser(payload) {
+  const response = await fetchWithTimeout(API_USERS_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (response.status === 401) {
+    clearCurrentUser();
+    redirectToLogin();
+    throw new Error("Your session expired. Please sign in again.");
+  }
+
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result.ok === false) {
+    throw new Error(result.error || `Create user failed with HTTP ${response.status}`);
+  }
+
+  return result.user;
+}
+
 let backendLoadPromise = null;
 let backendSyncAvailable = true;
 
@@ -799,6 +854,222 @@ function escapeHtml(text) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function formatUnitDisplay(unit) {
+  const value = String(unit ?? "").trim();
+  return value ? value.toUpperCase() : "-";
+}
+
+function bindUppercaseInput(input) {
+  if (!input || input.dataset.uppercaseBound) return;
+  input.addEventListener("input", () => {
+    const selectionStart = input.selectionStart;
+    const selectionEnd = input.selectionEnd;
+    input.value = input.value.toUpperCase();
+    if (selectionStart !== null && selectionEnd !== null) {
+      input.setSelectionRange(selectionStart, selectionEnd);
+    }
+  });
+  input.dataset.uppercaseBound = "true";
+}
+
+function escapeCsvValue(value) {
+  const text = String(value ?? "");
+  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function downloadInventoryCsv(items) {
+  const headers = ["Brand", "Category", "Description", "Stock Code", "Stock Balance", "Unit", "Location", "Status"];
+  const rows = items.map((item) => {
+    const status = getInventoryStatus(item);
+    return [
+      item.brand ?? "Generic",
+      item.model ?? "Standard",
+      item.name ?? "",
+      item.sku ?? "",
+      item.quantity ?? 0,
+      item.unit ?? "-",
+      item.location ?? "Main Store",
+      status.label
+    ].map(escapeCsvValue).join(",");
+  });
+  const csv = [headers.map(escapeCsvValue).join(","), ...rows].join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `inventory-export-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function downloadInventoryExcel(items) {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Inventory Management System";
+  workbook.created = new Date();
+  const worksheet = workbook.addWorksheet("LATEST", {
+    views: [{ state: "frozen", ySplit: 3 }]
+  });
+
+  worksheet.columns = [
+    { key: "brand", width: 10.63 },
+    { key: "model", width: 16.09 },
+    { key: "description", width: 82 },
+    { key: "sku", width: 23.45 },
+    { key: "unit", width: 8.73 },
+    { key: "consignment", width: 9.18 },
+    { key: "spacer1", width: 1.18 },
+    { key: "lcStock", width: 9.18 },
+    { key: "spacer2", width: 1.27 },
+    { key: "balanceStock", width: 9.27 },
+    { key: "location", width: 11.63 },
+    { key: "autoCount", width: 6.82, hidden: true }
+  ];
+
+  const colors = {
+    black: "FF000000",
+    white: "FFFFFFFF",
+    paleYellow: "FFFFFFCC",
+    yellow: "FFFFFF00",
+    lightYellow: "FFFFFF99",
+    cyan: "FFCCFFFF",
+    pink: "FFFFA3FF",
+    green: "FF66FF33",
+    red: "FFFF0000",
+    blue: "FF0070C0",
+    border: "FF000000"
+  };
+  const thinBorder = {
+    top: { style: "thin", color: { argb: colors.border } },
+    left: { style: "thin", color: { argb: colors.border } },
+    bottom: { style: "thin", color: { argb: colors.border } },
+    right: { style: "thin", color: { argb: colors.border } }
+  };
+  const baseAlignment = { vertical: "middle", horizontal: "center", wrapText: true };
+  const makeFill = (argb) => ({ type: "pattern", pattern: "solid", fgColor: { argb } });
+  const applyCellStyle = (cell, fill, alignment = baseAlignment) => {
+    cell.font = { name: "Calibri", size: 12, color: { argb: colors.black } };
+    cell.alignment = alignment;
+    cell.border = thinBorder;
+    if (fill) cell.fill = makeFill(fill);
+  };
+
+  worksheet.mergeCells("A1:J1");
+  const titleCell = worksheet.getCell("A1");
+  titleCell.value = "Product of Materials - Actel/ Alantek/ AMP/ Commscope/ Datwyler/ Honeywell/ Infinite/ Nexans/ OEM/ Panduit/ Systimax";
+  titleCell.font = { name: "Arial", size: 15, color: { argb: colors.white } };
+  titleCell.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
+  titleCell.fill = makeFill(colors.black);
+  titleCell.border = thinBorder;
+  worksheet.getRow(1).height = 35.5;
+  worksheet.getRow(2).height = 8;
+
+  const headerRow = worksheet.getRow(3);
+  headerRow.height = 28.5;
+  const headers = {
+    A: "BRAND",
+    B: "Model",
+    C: "DESCRIPTION",
+    D: "STOCK CODE",
+    E: "UOM",
+    F: "Consgt",
+    H: "LC      Stock",
+    J: "Balance      Stock",
+    K: "LOCATION",
+    L: "Auto Count"
+  };
+  Object.entries(headers).forEach(([column, label]) => {
+    const cell = worksheet.getCell(`${column}3`);
+    cell.value = label;
+    cell.font = { name: column === "H" || column === "J" ? "Arial" : "Calibri", size: 11, color: { argb: column === "F" || column === "H" || column === "J" ? colors.black : colors.white } };
+    cell.alignment = baseAlignment;
+    cell.border = thinBorder;
+    if (["A", "B", "C", "D", "K", "L"].includes(column)) cell.fill = makeFill(colors.black);
+    if (column === "F") cell.fill = makeFill(colors.pink);
+    if (column === "H") cell.fill = makeFill(colors.yellow);
+    if (column === "J") cell.fill = makeFill(colors.green);
+  });
+  ["G3", "I3"].forEach((address) => {
+    const cell = worksheet.getCell(address);
+    cell.border = thinBorder;
+    cell.fill = makeFill(colors.black);
+  });
+
+  items.forEach((item, index) => {
+    const rowNumber = index + 4;
+    const row = worksheet.getRow(rowNumber);
+    row.height = 18;
+    const ownQuantity = Number(item.ownQuantity ?? item.quantity ?? 0);
+    const consignmentQuantity = Number(item.consignmentQuantity ?? 0);
+    const totalQuantity = Number(item.quantity ?? ownQuantity + consignmentQuantity);
+    const values = {
+      A: item.brand ?? "Generic",
+      B: item.model ?? "Standard",
+      C: item.name ?? "",
+      D: item.sku ?? "",
+      E: formatUnitDisplay(item.unit),
+      F: consignmentQuantity || "",
+      G: "",
+      H: ownQuantity || "",
+      I: "",
+      J: totalQuantity,
+      K: item.location ?? "Main Store",
+      L: totalQuantity
+    };
+    Object.entries(values).forEach(([column, value]) => {
+      const cell = worksheet.getCell(`${column}${rowNumber}`);
+      cell.value = value;
+      const fill = column === "A"
+        ? colors.yellow
+        : column === "D"
+          ? colors.cyan
+          : column === "F"
+            ? colors.pink
+            : column === "H"
+              ? colors.lightYellow
+              : column === "J"
+                ? colors.green
+                : column === "C" || column === "E"
+                  ? colors.white
+                  : null;
+      const alignment = column === "C"
+        ? { vertical: "middle", horizontal: "left", wrapText: true }
+        : baseAlignment;
+      applyCellStyle(cell, fill, alignment);
+    });
+  });
+
+  const finalRowNumber = Math.max(items.length + 4, 5);
+  worksheet.autoFilter = {
+    from: "A3",
+    to: "K3"
+  };
+  worksheet.pageSetup = {
+    orientation: "landscape",
+    fitToPage: true,
+    fitToWidth: 1,
+    fitToHeight: 0
+  };
+  worksheet.eachRow({ includeEmpty: false }, (row) => {
+    row.eachCell((cell) => {
+      if (typeof cell.value === "string") cell.value = cell.value.trim();
+    });
+  });
+  worksheet.getCell(`A${finalRowNumber}`).note = `Exported ${new Date().toLocaleString()}`;
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `inventory-export-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function createNotice(message, variant = "") {
@@ -953,7 +1224,10 @@ function showStockOutConfirmationDialog(lines, details) {
     const consignmentQuantity = lines
       .filter((line) => line.issueSource === "consignment")
       .reduce((sum, line) => sum + Number(line.quantity || 0), 0);
-    const totalQuantity = lcQuantity + consignmentQuantity;
+    const manualQuantity = lines
+      .filter((line) => line.issueSource === "manual")
+      .reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+    const totalQuantity = lcQuantity + consignmentQuantity + manualQuantity;
     const modal = document.createElement("div");
     modal.className = "confirm-modal";
     modal.setAttribute("role", "dialog");
@@ -973,6 +1247,7 @@ function showStockOutConfirmationDialog(lines, details) {
           <div class="confirm-summary-card"><strong>${lines.length}</strong><span>Line items</span></div>
           <div class="confirm-summary-card"><strong>${totalQuantity}</strong><span>Total issue qty</span></div>
           <div class="confirm-summary-card"><strong>${consignmentQuantity}</strong><span>From consignment</span></div>
+          <div class="confirm-summary-card"><strong>${manualQuantity}</strong><span>Additional items</span></div>
         </div>
         <section class="confirm-category-section confirm-category-lc">
           <div class="confirm-category-header">
@@ -987,7 +1262,7 @@ function showStockOutConfirmationDialog(lines, details) {
                   <span>${escapeHtml(line.sku)} | ${escapeHtml(line.brand)} / ${escapeHtml(line.model)}</span>
                 </div>
                 <div class="confirm-line-result">
-                  <span class="inline-stock-chip ${line.issueSource === "consignment" ? "inline-stock-chip-consign" : "inline-stock-chip-own"}">
+                  <span class="inline-stock-chip ${line.issueSource === "manual" ? "inline-stock-chip-total" : line.issueSource === "consignment" ? "inline-stock-chip-consign" : "inline-stock-chip-own"}">
                     ${escapeHtml(formatStockPurposeLabel(line.issueSource))} <strong>${escapeHtml(String(line.quantity))}</strong>
                   </span>
                 </div>
@@ -1061,7 +1336,7 @@ function showCreateStockConfirmationDialog(item) {
             </div>
             <div class="create-review-field">
               <span>Unit</span>
-              <strong>${escapeHtml(item.unit)}</strong>
+              <strong>${escapeHtml(formatUnitDisplay(item.unit))}</strong>
             </div>
             <div class="create-review-field">
               <span>LC Stock</span>
@@ -1168,7 +1443,7 @@ function showRelocateStockConfirmationDialog(details) {
             </div>
             <div class="create-review-field">
               <span>Current Stock</span>
-              <strong>${escapeHtml(String(Number(item.quantity ?? 0)))} ${escapeHtml(item.unit ?? "")}</strong>
+              <strong>${escapeHtml(String(Number(item.quantity ?? 0)))} ${escapeHtml(formatUnitDisplay(item.unit))}</strong>
             </div>
             <div class="create-review-field">
               <span>Remarks</span>
@@ -1236,6 +1511,21 @@ function getCorrectableRecordKind(record) {
   return record?.type === "correction" ? record.rootSourceType : record?.type;
 }
 
+function getBalanceCorrectionRows(record) {
+  const correctionKind = getCorrectableRecordKind(record);
+  const rows = record?.itemRows ?? [];
+  if (correctionKind === "stock-out") {
+    return rows.filter((item) => item.itemId);
+  }
+  return rows;
+}
+
+function getDocumentOnlyCorrectionRows(record) {
+  const correctionKind = getCorrectableRecordKind(record);
+  if (correctionKind !== "stock-out") return [];
+  return (record?.itemRows ?? []).filter((item) => !item.itemId);
+}
+
 function getCorrectionPreviewItems(record, form) {
   const correctionKind = getCorrectableRecordKind(record);
   if (correctionKind === "create") {
@@ -1256,7 +1546,7 @@ function getCorrectionPreviewItems(record, form) {
   }
 
   const isStockIn = correctionKind === "stock-in";
-  return record.itemRows.map((item, index) => {
+  return getBalanceCorrectionRows(record).map((item, index) => {
     const beforeValue = isStockIn
       ? `${Number(item.quantity ?? 0)} ${item.stockType === "consignment" ? "Consignment" : "LC Stock"}`
       : `${Number(item.ownQuantity ?? 0)} LC / ${Number(item.consignmentQuantity ?? 0)} Consignment`;
@@ -1307,6 +1597,7 @@ function showCorrectionConfirmationDialog(record, form) {
     const correctionKind = getCorrectableRecordKind(record);
     const isCreate = correctionKind === "create";
     const recordLabel = isCreate ? "stock creation" : correctionKind === "stock-in" ? "stock-in" : "stock-out";
+    const correctionRows = isCreate ? record.itemRows : getBalanceCorrectionRows(record);
     modal.innerHTML = `
       <div class="confirm-modal-backdrop" data-confirm-cancel></div>
       <div class="confirm-dialog create-stock-confirm-dialog">
@@ -1323,7 +1614,7 @@ function showCorrectionConfirmationDialog(record, form) {
               <span class="create-review-kicker">Original record</span>
               <h4>${escapeHtml(record.title)}</h4>
             </div>
-            <span class="create-review-location">${escapeHtml(record.itemRows.length)} line${record.itemRows.length === 1 ? "" : "s"}</span>
+            <span class="create-review-location">${escapeHtml(correctionRows.length)} line${correctionRows.length === 1 ? "" : "s"}</span>
           </div>
           <div class="create-review-grid">
             <div class="create-review-field">
@@ -1577,7 +1868,7 @@ function renderMovementCorrectionTable(record, movementSourceKind, showOwnMoveme
               <td>${renderCorrectionAdjustmentValue(ownDisplayQuantity, consignmentDisplayQuantity, showOwnMovementColumn, showConsignmentMovementColumn)}</td>
               <td>${renderMovementChangeValue(item, "previous", movementSourceKind, visibleBreakdownSources)}</td>
               <td>${renderMovementChangeValue(item, "corrected", movementSourceKind, visibleBreakdownSources)}</td>
-              <td>${escapeHtml(item.unit)}</td>
+              <td>${escapeHtml(formatUnitDisplay(item.unit))}</td>
               <td>${escapeHtml(item.location)}</td>
             </tr>
           `;
@@ -1620,7 +1911,7 @@ function renderActivityDetailItemsSection(record) {
                 <td><strong>${escapeHtml(item.name)}</strong></td>
                 <td>${escapeHtml(item.sku)}</td>
                 <td>${escapeHtml(String(item.quantity ?? 0))}</td>
-                <td>${escapeHtml(item.unit)}</td>
+              <td>${escapeHtml(formatUnitDisplay(item.unit))}</td>
                 <td>${escapeHtml(item.fromLocation)}</td>
                 <td>${escapeHtml(item.toLocation)}</td>
               </tr>
@@ -1677,7 +1968,7 @@ function renderActivityDetailItemsSection(record) {
                 <td>${escapeHtml(item.model)}</td>
                 <td><strong>${escapeHtml(item.name)}</strong></td>
                 <td>${escapeHtml(item.sku)}</td>
-                <td>${escapeHtml(item.unit)}</td>
+                <td>${escapeHtml(formatUnitDisplay(item.unit))}</td>
                 <td>${escapeHtml(item.location)}</td>
               </tr>
             `).join("")}
@@ -1713,9 +2004,9 @@ function renderActivityDetailItemsSection(record) {
                   <td>${escapeHtml(item.sku)}</td>
                   ${showOwnMovementColumn ? `<td class="activity-detail-quantity-cell">${renderActivityDetailQuantityValue(ownDisplayQuantity, record.type)}</td>` : ""}
                   ${showConsignmentMovementColumn ? `<td class="activity-detail-quantity-cell">${renderActivityDetailQuantityValue(consignmentDisplayQuantity, record.type)}${record.type !== "stock-out" && item.consignmentToRestock ? `<br><span class="muted">${escapeHtml(String(item.consignmentToRestock))} to restock</span>` : ""}</td>` : ""}
-                  <td>${escapeHtml(item.unit)}</td>
+                  <td>${escapeHtml(formatUnitDisplay(item.unit))}</td>
                   <td>${escapeHtml(item.location)}</td>
-                  ${record.type === "stock-out" ? `<td class="activity-detail-balance-after">${escapeHtml(String(item.balanceAfter ?? 0))}</td>` : ""}
+                  ${record.type === "stock-out" ? `<td class="activity-detail-balance-after">${escapeHtml(item.itemId ? String(item.balanceAfter ?? 0) : "Not tracked")}</td>` : ""}
                 </tr>
               `;
             }).join("")}
@@ -1860,6 +2151,8 @@ function renderCorrectionSection(record) {
   const isStockIn = correctionKind === "stock-in";
   const isCreate = correctionKind === "create";
   const recordLabel = isCreate ? "stock creation" : isStockIn ? "stock-in" : "stock-out";
+  const balanceCorrectionRows = isCreate ? record.itemRows : getBalanceCorrectionRows(record);
+  const documentOnlyRows = getDocumentOnlyCorrectionRows(record);
   if (!canCorrect) {
     return `
       <section class="panel project-card correction-panel">
@@ -1868,6 +2161,19 @@ function renderCorrectionSection(record) {
             <p class="eyebrow">Correction</p>
             <h3>Correction access restricted</h3>
             <p class="section-copy">This ${escapeHtml(recordLabel)} record can only be corrected by ${escapeHtml(getCorrectionPermissionLabel(correctionKind))} users. You are signed in as ${escapeHtml(getUserRole(currentUser))}.</p>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+  if (!isCreate && !balanceCorrectionRows.length) {
+    return `
+      <section class="panel project-card correction-panel">
+        <div class="panel-header panel-header-tight">
+          <div>
+            <p class="eyebrow">Correction</p>
+            <h3>No inventory stock to correct</h3>
+            <p class="section-copy">This stock-out only contains additional handover items. These lines are document-only and do not adjust LC or consignment balances.</p>
           </div>
         </div>
       </section>
@@ -1888,13 +2194,13 @@ function renderCorrectionSection(record) {
           <div>
             <p class="eyebrow">Active Correction</p>
             <h3>Correct this ${recordLabel} record</h3>
-            <p class="section-copy">${isCreate ? "Create an audit-safe correction for item information keyed wrongly during creation." : "Create an audit-safe correction. The original record remains unchanged and the inventory balance is adjusted by the correction."}</p>
+            <p class="section-copy">${isCreate ? "Create an audit-safe correction for item information keyed wrongly during creation." : "Create an audit-safe correction for inventory-issued items. Additional handover items are document-only and do not adjust stock balances."}</p>
           </div>
           <button type="button" class="button-link" data-cancel-correction>Cancel Correction</button>
         </div>
         ${isCreate ? `
           <div class="field-grid">
-            ${record.itemRows.map((item, index) => `
+            ${balanceCorrectionRows.map((item, index) => `
               <label>
                 Brand
                 <input name="correctBrand-${index}" type="text" value="${escapeHtml(item.brand ?? "")}" placeholder="CommScope" required>
@@ -1932,7 +2238,7 @@ function renderCorrectionSection(record) {
               </tr>
             </thead>
             <tbody>
-              ${record.itemRows.map((item, index) => `
+              ${balanceCorrectionRows.map((item, index) => `
                 <tr data-correction-row data-item-id="${escapeHtml(item.itemId ?? "")}">
                   <td>
                     <strong>${escapeHtml(item.name)}</strong>
@@ -1956,6 +2262,33 @@ function renderCorrectionSection(record) {
             </tbody>
           </table>
         </div>
+        ${documentOnlyRows.length ? `
+          <div class="table-wrap elevated-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Additional Handover Item</th>
+                  <th>Stock Code</th>
+                  <th>Issued Qty</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${documentOnlyRows.map((item) => `
+                  <tr>
+                    <td>
+                      <strong>${escapeHtml(item.name)}</strong>
+                      <br><span class="muted">${escapeHtml(item.brand ?? "-")} / ${escapeHtml(item.model ?? "-")}</span>
+                    </td>
+                    <td>${escapeHtml(item.sku ?? "-")}</td>
+                    <td>${escapeHtml(String(item.quantity ?? 0))} ${escapeHtml(formatUnitDisplay(item.unit))}</td>
+                    <td><span class="inline-stock-chip inline-stock-chip-total">Document only</span></td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        ` : ""}
         `}
         <label>
           Correction reason
@@ -1963,7 +2296,7 @@ function renderCorrectionSection(record) {
         </label>
         <div class="form-actions">
           <button type="submit" class="button-secondary">Save Correction</button>
-          <span class="form-hint">Corrections create a new audit record and update ${isCreate ? "the master item information" : "inventory balances"}.</span>
+          <span class="form-hint">Corrections create a new audit record and update ${isCreate ? "the master item information" : "inventory balances for inventory-issued rows"}.</span>
         </div>
       </form>
     </section>
@@ -1991,11 +2324,101 @@ function attachSignOutHandler(button) {
   button.dataset.bound = "true";
 }
 
+function standardizeInventorySidebar() {
+  const page = document.body.dataset.page;
+  const sidebarPages = new Set([
+    "inventory",
+    "add-stock",
+    "draw-stock",
+    "create-stock",
+    "relocate-stock",
+    "activity-history",
+    "activity-detail",
+    "manage-users"
+  ]);
+  if (!sidebarPages.has(page)) return;
+  const sidebar = document.querySelector(".sidebar");
+  if (!sidebar || sidebar.dataset.standardized) return;
+  const activeHref = page === "activity-detail"
+    ? "activity-history.html"
+    : page === "create-stock"
+      ? "add-stock.html"
+      : `${page}.html`;
+  const navItems = [
+    ["index.html", "HM", "Home", "Access core inventory workflows"],
+    ["inventory.html", "IM", "Inventory", "Central stock register and availability"],
+    ["add-stock.html", "IN", "Add Stocks", "Record stock-in transactions"],
+    ["draw-stock.html", "OUT", "Draw Stocks", "Process stock-out transactions"],
+    ["relocate-stock.html", "MOV", "Relocate Stock", "Move items between storage locations"],
+    ["activity-history.html", "LOG", "Activity History", "Review transaction audit records"],
+    ["manage-users.html", "USR", "Create User", "Add user accounts and roles"]
+  ];
+
+  sidebar.innerHTML = `
+    <button class="sidebar-close" type="button" data-sidebar-close aria-label="Close navigation">&times;</button>
+    <div class="brand-block">
+      <div class="brand-mark">IMS</div>
+      <div>
+        <p class="eyebrow">Inventory Workspace</p>
+        <h1>Inventory Hub</h1>
+        <p class="brand-meta">Operational stock control</p>
+      </div>
+    </div>
+    <nav class="nav-section" aria-label="Primary navigation">
+      <p class="nav-section-label">Navigation</p>
+      <div class="nav-card">
+        ${navItems.map(([href, icon, title, subtitle]) => `
+          <a class="nav-link${href === activeHref ? " active" : ""}" href="${href}"><span class="nav-icon">${icon}</span><span class="nav-copy"><span class="nav-title">${title}</span><span class="nav-subtitle">${subtitle}</span></span></a>
+        `).join("")}
+      </div>
+    </nav>
+  `;
+  sidebar.dataset.standardized = "true";
+}
+
 function initAuthChrome(currentUser) {
   if (!currentUser) return;
 
+  standardizeInventorySidebar();
+
   const topbarActions = document.querySelector(".topbar-actions");
   if (topbarActions && !topbarActions.querySelector("[data-session-chip]")) {
+    if (document.body.dataset.page === "inventory") {
+      if (!topbarActions.querySelector(".button-link-signout")) {
+        const signOutButton = document.createElement("button");
+        signOutButton.type = "button";
+        signOutButton.className = "button-link button-link-ghost button-link-signout";
+        signOutButton.textContent = "Sign Out";
+        topbarActions.append(signOutButton);
+        attachSignOutHandler(signOutButton);
+      }
+      return;
+    }
+
+    if (["add-stock", "create-stock", "draw-stock", "relocate-stock", "activity-history", "manage-users"].includes(document.body.dataset.page)) {
+      topbarActions.querySelector("#inventory-export-button")?.remove();
+      topbarActions.querySelector(".inventory-menu-button")?.remove();
+      if (document.body.dataset.page !== "add-stock") {
+        topbarActions.querySelector('a[href="create-stock.html"]')?.remove();
+      }
+
+      if (!topbarActions.querySelector('a[href="index.html"]')) {
+        const backHomeLink = document.createElement("a");
+        backHomeLink.className = "button-link";
+        backHomeLink.href = "index.html";
+        backHomeLink.textContent = "Back to Home";
+        topbarActions.prepend(backHomeLink);
+      }
+
+      const signOutButton = document.createElement("button");
+      signOutButton.type = "button";
+      signOutButton.className = "button-link button-link-ghost button-link-signout";
+      signOutButton.textContent = "Sign Out";
+      topbarActions.append(signOutButton);
+      attachSignOutHandler(signOutButton);
+      return;
+    }
+
     const existingActions = Array.from(topbarActions.children);
     const sessionSlot = document.createElement("div");
     sessionSlot.className = "topbar-session-slot";
@@ -2046,8 +2469,16 @@ function applyRoleNavigation(currentUser) {
 
   document.querySelectorAll("#home-action-grid .primary-action-card").forEach((card, index) => {
     const icon = card.querySelector(".primary-action-icon");
-    if (icon) icon.textContent = String(index + 1).padStart(2, "0");
+    if (icon && /^\d+$/.test(icon.textContent.trim())) {
+      icon.textContent = String(index + 1).padStart(2, "0");
+    }
   });
+
+  const homeActionGrid = document.querySelector("#home-action-grid");
+  if (homeActionGrid) {
+    const visibleActionCount = homeActionGrid.querySelectorAll(".primary-action-card").length;
+    homeActionGrid.style.setProperty("--home-action-count", String(Math.max(1, visibleActionCount)));
+  }
 }
 
 function initHomePage(currentUser) {
@@ -2172,6 +2603,7 @@ function initSidebar() {
   const toggleButtons = document.querySelectorAll("[data-sidebar-toggle]");
   const closeButtons = document.querySelectorAll("[data-sidebar-close]");
   const key = "ims-sidebar-open";
+  const pinnedKey = "ims-sidebar-pinned";
   const desktopBreakpoint = 1120;
   let closeTimer;
 
@@ -2179,8 +2611,33 @@ function initSidebar() {
 
   body.classList.add("has-edge-sidebar");
 
+  let pinButton = sidebar.querySelector("[data-sidebar-pin]");
+  if (!pinButton) {
+    pinButton = document.createElement("button");
+    pinButton.type = "button";
+    pinButton.className = "sidebar-pin";
+    pinButton.dataset.sidebarPin = "true";
+    sidebar.prepend(pinButton);
+  }
+
+  const setPinned = (pinned, persist = true) => {
+    const canPin = window.innerWidth > desktopBreakpoint;
+    body.classList.toggle("sidebar-pinned", canPin && pinned);
+    pinButton.setAttribute("aria-pressed", String(canPin && pinned));
+    pinButton.textContent = canPin && pinned ? "Unpin" : "Pin";
+    if (persist) {
+      localStorage.setItem(pinnedKey, pinned ? "1" : "0");
+    }
+    if (canPin && pinned) {
+      body.classList.remove("sidebar-open");
+      body.classList.remove("sidebar-peek");
+      localStorage.setItem(key, "0");
+    }
+  };
+
   const setOpen = (open) => {
     if (window.innerWidth > desktopBreakpoint) {
+      if (body.classList.contains("sidebar-pinned")) return;
       body.classList.remove("sidebar-open");
       localStorage.setItem(key, "0");
       return;
@@ -2190,6 +2647,7 @@ function initSidebar() {
   };
 
   const setPeek = (open) => {
+    if (body.classList.contains("sidebar-pinned")) return;
     if (window.innerWidth <= desktopBreakpoint || body.classList.contains("sidebar-open")) return;
     body.classList.toggle("sidebar-peek", open);
   };
@@ -2207,9 +2665,18 @@ function initSidebar() {
   };
 
   if (window.innerWidth <= desktopBreakpoint) {
+    setPinned(false, false);
     setOpen(localStorage.getItem(key) === "1");
   } else {
+    setPinned(localStorage.getItem(pinnedKey) === "1");
     localStorage.setItem(key, "0");
+  }
+
+  if (!pinButton.dataset.bound) {
+    pinButton.addEventListener("click", () => {
+      setPinned(!body.classList.contains("sidebar-pinned"));
+    });
+    pinButton.dataset.bound = "true";
   }
 
   toggleButtons.forEach((button) => {
@@ -2239,6 +2706,7 @@ function initSidebar() {
   if (!body.dataset.sidebarEdgeBound) {
     document.addEventListener("pointermove", (event) => {
       if (window.innerWidth <= desktopBreakpoint) return;
+      if (body.classList.contains("sidebar-pinned")) return;
       if (event.clientX <= 18) {
         clearPeekTimer();
         setPeek(true);
@@ -2249,22 +2717,26 @@ function initSidebar() {
 
     sidebar.addEventListener("pointerenter", () => {
       if (window.innerWidth <= desktopBreakpoint) return;
+      if (body.classList.contains("sidebar-pinned")) return;
       clearPeekTimer();
       setPeek(true);
     });
 
     sidebar.addEventListener("pointerleave", () => {
       if (window.innerWidth <= desktopBreakpoint) return;
+      if (body.classList.contains("sidebar-pinned")) return;
       schedulePeekClose();
     });
 
     window.addEventListener("resize", () => {
       if (window.innerWidth <= desktopBreakpoint) {
+        setPinned(false, false);
         body.classList.remove("sidebar-peek");
       } else {
         body.classList.remove("sidebar-open");
         body.classList.remove("sidebar-peek");
         localStorage.setItem(key, "0");
+        setPinned(localStorage.getItem(pinnedKey) === "1");
       }
     });
 
@@ -2523,7 +2995,7 @@ function updateStockPickerButton(button, item, options = {}) {
   button.innerHTML = item
     ? `
       <span class="stock-picker-button-title">${escapeHtml(item.name)}</span>
-      <span class="stock-picker-button-meta">${escapeHtml(item.sku ?? "-")} | ${Number(item.quantity ?? 0)} ${escapeHtml(item.unit ?? "")} ${escapeHtml(quantityLabel)}</span>
+      <span class="stock-picker-button-meta">${escapeHtml(item.sku ?? "-")} | ${Number(item.quantity ?? 0)} ${escapeHtml(formatUnitDisplay(item.unit))} ${escapeHtml(quantityLabel)}</span>
     `
     : `
       <span class="stock-picker-button-title">Select an item</span>
@@ -2580,6 +3052,31 @@ function normalizeStockOutItems(record, inventory) {
   }];
 }
 
+function normalizeStockOutManualItems(record) {
+  return (record.manualItems ?? []).map((line) => ({
+    description: line.description ?? line.name ?? "-",
+    stockCode: line.stockCode ?? line.sku ?? "-",
+    brand: line.brand ?? "-",
+    category: line.category ?? line.model ?? "-",
+    quantity: Number(line.quantity ?? 0),
+    unit: line.unit ?? "-",
+    remarks: line.remarks ?? "-"
+  }));
+}
+
+function formatHandoverRemarksText(value) {
+  const text = String(value ?? "").replace(/\r\n?/g, "\n").trim();
+  if (!text) return "-";
+  if (text.includes("\n")) return text;
+  if (!/AP\s*\d+\s*MAC:/i.test(text) && !/S\/N:/i.test(text)) return text;
+
+  return text
+    .replace(/\s+(AP\s*\d+)(?=\s+(?:S\/N:|MAC:))/gi, "\n\n$1")
+    .replace(/\s+(S\/N:)/gi, "\n$1")
+    .replace(/\s+(MAC:)/gi, "\n$1")
+    .trim();
+}
+
 function renderStockOutIssueList(container, emptyState, summary, inventory) {
   if (!container) return;
 
@@ -2594,12 +3091,15 @@ function renderStockOutIssueList(container, emptyState, summary, inventory) {
   const totalLines = rows.length;
   let totalOwnQuantity = 0;
   let totalConsignmentQuantity = 0;
+  let totalManualQuantity = 0;
 
   rows.forEach((row) => {
     const item = inventory.find((entry) => entry.id === row.dataset.itemId);
-    const issueSource = row.dataset.issueSource === "consignment" ? "consignment" : "own";
+    const issueSource = row.dataset.issueSource === "manual" ? "manual" : row.dataset.issueSource === "consignment" ? "consignment" : "own";
     const qty = Number(row.querySelector('input[name="issueQuantity"]')?.value ?? "0");
-    if (issueSource === "consignment") {
+    if (issueSource === "manual") {
+      totalManualQuantity += Math.max(qty, 0);
+    } else if (issueSource === "consignment") {
       totalConsignmentQuantity += Math.max(qty, 0);
     } else {
       totalOwnQuantity += Math.max(qty, 0);
@@ -2610,6 +3110,11 @@ function renderStockOutIssueList(container, emptyState, summary, inventory) {
     }
     const consignmentNotice = row.querySelector("[data-stock-out-consignment-notice]");
     if (consignmentNotice) {
+      if (issueSource === "manual") {
+        consignmentNotice.hidden = true;
+        consignmentNotice.textContent = "";
+        return;
+      }
       const availableForSource = issueSource === "consignment"
         ? Number(item?.consignmentQuantity ?? 0)
         : Number(item?.ownQuantity ?? item?.quantity ?? 0);
@@ -2621,7 +3126,7 @@ function renderStockOutIssueList(container, emptyState, summary, inventory) {
     }
   });
 
-  summary.textContent = `${totalLines} item line${totalLines === 1 ? "" : "s"} | LC Stock ${totalOwnQuantity} | Consignment ${totalConsignmentQuantity}`;
+  summary.textContent = `${totalLines} item line${totalLines === 1 ? "" : "s"} | LC Stock ${totalOwnQuantity} | Consignment ${totalConsignmentQuantity} | Additional ${totalManualQuantity}`;
 }
 
 function getActivityEvents(data) {
@@ -2680,9 +3185,14 @@ function getActivityEvents(data) {
 
   const stockOuts = data.stockOuts.map((entry) => {
     const items = normalizeStockOutItems(entry, data.inventory);
-    const itemLines = items.map((line) => line.itemSnapshot?.name ?? "Item");
+    const manualItems = normalizeStockOutManualItems(entry);
+    const itemLines = [
+      ...items.map((line) => line.itemSnapshot?.name ?? "Item"),
+      ...manualItems.map((line) => line.description ?? "Additional item")
+    ];
     const itemSummary = itemLines.join(", ");
-    const totalQuantity = items.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+    const totalQuantity = items.reduce((sum, line) => sum + Number(line.quantity || 0), 0)
+      + manualItems.reduce((sum, line) => sum + Number(line.quantity || 0), 0);
     return {
       id: `draw-${entry.id}`,
       type: "stock-out",
@@ -2697,7 +3207,7 @@ function getActivityEvents(data) {
         { label: "Document", value: entry.documentNo ?? "-" },
         { label: "Received by", value: entry.receivedBy ?? "-" }
       ],
-      quantityText: formatLineItemCount(items.length),
+      quantityText: formatLineItemCount(items.length + manualItems.length),
       createdAt: entry.createdAt,
       actions: [
         { kind: "view-handover", label: "View Form", stockOutId: entry.id },
@@ -2854,7 +3364,7 @@ function getActivityDetailRecord(type, id, data) {
         { label: "Brand", value: item.brand ?? "Generic" },
         { label: "Category", value: item.model ?? "Standard" },
         { label: "Stock Code", value: item.sku ?? "-" },
-        { label: "Unit", value: item.unit ?? "-" },
+        { label: "Unit", value: formatUnitDisplay(item.unit) },
         { label: "Location", value: item.location ?? "Main Store" }
       ],
       itemRows: [{
@@ -2957,6 +3467,7 @@ function getActivityDetailRecord(type, id, data) {
     if (!stockOut) return null;
     const latestCorrection = getLatestCorrection(data, type, id);
     const items = normalizeStockOutItems(stockOut, data.inventory);
+    const manualItems = normalizeStockOutManualItems(stockOut);
     const balanceRows = items.map((line) => {
       const hasBalanceAfterSnapshot = line.balanceAfter && typeof line.balanceAfter === "object";
       const hasBalanceBeforeSnapshot = line.balanceBefore && typeof line.balanceBefore === "object";
@@ -3011,7 +3522,20 @@ function getActivityDetailRecord(type, id, data) {
         ownQuantity: line.ownQuantity ?? line.quantity ?? 0,
         consignmentQuantity: line.consignmentQuantity ?? 0,
         consignmentToRestock: line.consignmentToRestock ?? 0
-      })),
+      })).concat(manualItems.map((line) => ({
+        brand: line.brand ?? "-",
+        model: line.category ?? "-",
+        name: line.description ?? "-",
+        itemId: null,
+        sku: line.stockCode ?? "-",
+        quantity: line.quantity ?? 0,
+        unit: line.unit ?? "-",
+        location: "Additional handover item",
+        balanceAfter: null,
+        ownQuantity: 0,
+        consignmentQuantity: 0,
+        consignmentToRestock: 0
+      }))),
       balanceRows,
       hasCorrection: Boolean(latestCorrection),
       latestCorrectionId: latestCorrection?.id ?? null,
@@ -3156,22 +3680,84 @@ function getActivityDetailRecord(type, id, data) {
   return null;
 }
 
-function buildHandoverDocumentMarkup(record, items) {
+const HANDOVER_LOGO_SRC = "assets/links-creation-logo.png";
+
+function getHandoverRowWeight(line) {
+  const descriptionLines = Math.max(1, Math.ceil(String(line.description ?? "").length / 34));
+  const stockCodeLines = Math.max(1, Math.ceil(String(line.stockCode ?? "").length / 18));
+  const remarksLines = Math.max(1, String(line.remarks ?? "").split("\n").length);
+  return Math.max(1, descriptionLines, stockCodeLines, remarksLines * 0.9);
+}
+
+function takeHandoverRowsByWeight(rows, maxWeight) {
+  const selected = [];
+  let usedWeight = 0;
+  while (rows.length) {
+    const nextWeight = getHandoverRowWeight(rows[0]);
+    if (selected.length && usedWeight + nextWeight > maxWeight) break;
+    selected.push(rows.shift());
+    usedWeight += nextWeight;
+  }
+  return selected;
+}
+
+function paginateHandoverRows(rows) {
+  const pendingRows = [...rows];
+  const totalWeight = pendingRows.reduce((sum, line) => sum + getHandoverRowWeight(line), 0);
+  if (totalWeight <= 14) return [{ rows: pendingRows, final: true, fullHeader: true }];
+
+  const pages = [];
+  pages.push({ rows: takeHandoverRowsByWeight(pendingRows, 19), final: false, fullHeader: true });
+
+  while (pendingRows.length) {
+    const remainingWeight = pendingRows.reduce((sum, line) => sum + getHandoverRowWeight(line), 0);
+    const isFinal = remainingWeight <= 10;
+    pages.push({
+      rows: takeHandoverRowsByWeight(pendingRows, isFinal ? 10 : 22),
+      final: isFinal,
+      fullHeader: false
+    });
+  }
+
+  if (!pages.some((page) => page.final)) {
+    pages.push({ rows: [], final: true, fullHeader: false });
+  }
+
+  return pages;
+}
+
+function buildHandoverDocumentMarkup(record, items, manualItems = [], options = {}) {
+  const logoSrc = options.logoSrc || HANDOVER_LOGO_SRC;
+  const handoverRows = [
+    ...items.map((line) => {
+      const item = line.itemSnapshot ?? {};
+      return {
+        brand: item.brand ?? "-",
+        category: item.model ?? "-",
+        description: item.name ?? "-",
+        stockCode: item.sku ?? "-",
+        quantity: line.quantity ?? 0,
+        unit: item.unit ?? "-",
+        remarks: "-"
+      };
+    }),
+    ...manualItems.map((line) => ({
+      brand: line.brand ?? "-",
+      category: line.category ?? "-",
+      description: line.description ?? "-",
+      stockCode: line.stockCode ?? "-",
+      quantity: line.quantity ?? 0,
+      unit: line.unit ?? "-",
+      remarks: formatHandoverRemarksText(line.remarks ?? "-")
+    }))
+  ];
   const companyLogoMarkup = `
     <div class="company-logo-mark" aria-label="Links Creation">
-      <div class="company-logo-text">
-        <strong><span>LINKS</span> CREATION</strong>
-        <small>Linking People, Creating Business</small>
-      </div>
-      <svg class="company-logo-rings" viewBox="0 0 96 52" aria-hidden="true" focusable="false">
-        <ellipse cx="38" cy="26" rx="34" ry="12" transform="rotate(-26 38 26)" fill="none" stroke="#008a39" stroke-width="5" />
-        <ellipse cx="50" cy="26" rx="34" ry="12" transform="rotate(-26 50 26)" fill="none" stroke="#124da1" stroke-width="5" />
-        <ellipse cx="64" cy="26" rx="30" ry="12" transform="rotate(-57 64 26)" fill="none" stroke="#e4252b" stroke-width="5" />
-      </svg>
+      <img class="company-logo-image" src="${escapeHtml(logoSrc)}" alt="Links Creation">
     </div>
   `;
-  return `
-    <section class="print-header">
+  const renderFullHeader = () => `
+    <header class="print-header">
       <div class="print-brand-block">
         ${companyLogoMarkup}
         <div class="print-title-block">
@@ -3184,7 +3770,16 @@ function buildHandoverDocumentMarkup(record, items) {
         <p><span>Form No.</span><strong>${escapeHtml(record.documentNo)}</strong></p>
         <p><span>Date</span><strong>${formatDateTime(record.createdAt)}</strong></p>
       </div>
-    </section>
+    </header>
+  `;
+  const renderContinuationHeader = (pageNumber) => `
+    <header class="handover-continuation-header">
+      <span>Material Handover Form</span>
+      <strong>${escapeHtml(record.documentNo)}</strong>
+      <span>Page ${pageNumber}</span>
+    </header>
+  `;
+  const renderDetailsPanel = () => `
 
     <section class="print-section print-detail-panel">
       <div class="print-section-title">
@@ -3197,11 +3792,12 @@ function buildHandoverDocumentMarkup(record, items) {
         <div class="print-field"><span>Prepared By</span><strong>${escapeHtml(record.createdByName ?? "Unknown User")}</strong></div>
       </div>
     </section>
-
-    <section class="print-section handover-items-section">
+  `;
+  const renderItemsSection = (pageRows, startIndex, isContinuation = false) => `
+    <section class="print-section handover-items-section${isContinuation ? " handover-items-section-continuation" : ""}">
       <div class="print-section-title">
         <span>02</span>
-        <h2>Issued Items</h2>
+        <h2>${isContinuation ? "Issued Items Continued" : "Issued Items"}</h2>
       </div>
       <table class="handover-items-table">
         <thead>
@@ -3213,62 +3809,106 @@ function buildHandoverDocumentMarkup(record, items) {
             <th>Stock Code</th>
             <th>Total Qty</th>
             <th>Unit</th>
+            <th>Remarks</th>
           </tr>
         </thead>
         <tbody>
-          ${items.map((line, index) => {
-            const item = line.itemSnapshot ?? {};
-            return `
-              <tr>
-                <td>${index + 1}</td>
-                <td>${escapeHtml(item.brand ?? "-")}</td>
-                <td>${escapeHtml(item.model ?? "-")}</td>
-                <td>${escapeHtml(item.name ?? "-")}</td>
-                <td>${escapeHtml(item.sku ?? "-")}</td>
-                <td>${line.quantity}</td>
-                <td>${escapeHtml(item.unit ?? "-")}</td>
-              </tr>
-            `;
-          }).join("")}
+          ${pageRows.map((line, index) => `
+            <tr>
+              <td>${startIndex + index + 1}</td>
+              <td>${escapeHtml(line.brand)}</td>
+              <td>${escapeHtml(line.category)}</td>
+              <td>${escapeHtml(line.description)}</td>
+              <td>${escapeHtml(line.stockCode)}</td>
+              <td>${escapeHtml(String(line.quantity))}</td>
+              <td>${escapeHtml(formatUnitDisplay(line.unit))}</td>
+              <td class="handover-remarks-cell">${escapeHtml(line.remarks)}</td>
+            </tr>
+          `).join("")}
         </tbody>
       </table>
     </section>
+  `;
+  const renderClosingBlock = () => `
+    <div class="handover-closing-block">
+      <section class="print-section handover-acknowledgement">
+        <div class="print-section-title">
+          <span>03</span>
+          <h2>Acknowledgment</h2>
+        </div>
+        <p>The items listed above have been handed over in the quantities stated. The receiver acknowledges receipt of the materials and agrees to notify the issuing party promptly if any discrepancy is found.</p>
+      </section>
 
-    <section class="print-section handover-acknowledgement">
-      <div class="print-section-title">
-        <span>03</span>
-        <h2>Acknowledgment</h2>
-      </div>
-      <p>The items listed above have been handed over in the quantities stated. The receiver acknowledges receipt of the materials and agrees to notify the issuing party promptly if any discrepancy is found.</p>
-    </section>
+      <section class="signatures">
+        <div class="signature-box">
+          <span class="signature-role">Issued By</span>
+          <div class="signature-line"><strong>${escapeHtml(record.createdByName ?? "Issued By")}</strong></div>
+          <span>Name / Signature / Date</span>
+        </div>
+        <div class="signature-box">
+          <span class="signature-role">Received By</span>
+          <div class="signature-line"></div>
+          <span>Name / Signature / Date</span>
+        </div>
+      </section>
 
-    <section class="signatures">
-      <div class="signature-box">
-        <span class="signature-role">Issued By</span>
-        <div class="signature-line"><strong>${escapeHtml(record.createdByName ?? "Issued By")}</strong></div>
-        <span>Name / Signature / Date</span>
-      </div>
-      <div class="signature-box">
-        <span class="signature-role">Received By</span>
-        <div class="signature-line"></div>
-        <span>Name / Signature / Date</span>
-      </div>
-    </section>
-
-    <footer class="print-footer">
+      <footer class="print-footer">
+        <span>${escapeHtml(record.documentNo)}</span>
+        <span>Computer-generated document</span>
+      </footer>
+    </div>
+  `;
+  const renderPageFooter = (pageNumber) => `
+    <footer class="handover-page-footer">
       <span>${escapeHtml(record.documentNo)}</span>
-      <span>Computer-generated document</span>
+      <span>Continued on page ${pageNumber + 1}</span>
     </footer>
   `;
+
+  let rowOffset = 0;
+  const pages = paginateHandoverRows(handoverRows);
+  return pages.map((page, pageIndex) => {
+    const pageRows = page.rows;
+    const pageNumber = pageIndex + 1;
+    const pageMarkup = `
+      <article class="handover-page${page.final ? " handover-page-final" : ""}">
+        ${page.fullHeader ? renderFullHeader() : renderContinuationHeader(pageNumber)}
+        ${page.fullHeader ? renderDetailsPanel() : ""}
+        ${pageRows.length ? renderItemsSection(pageRows, rowOffset, !page.fullHeader) : ""}
+        ${page.final ? renderClosingBlock() : renderPageFooter(pageNumber)}
+      </article>
+    `;
+    rowOffset += pageRows.length;
+    return pageMarkup;
+  }).join("");
 }
 
-function downloadHandoverFile(stockOutId) {
+async function loadAssetAsDataUrl(src) {
+  const response = await fetch(src);
+  if (!response.ok) throw new Error(`Could not load asset: ${src}`);
+  const blob = await response.blob();
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result || "")));
+    reader.addEventListener("error", () => reject(reader.error || new Error(`Could not read asset: ${src}`)));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function downloadHandoverFile(stockOutId) {
   const data = loadData();
   const record = data.stockOuts.find((entry) => entry.id === stockOutId);
   if (!record) return;
 
   const items = normalizeStockOutItems(record, data.inventory);
-  const documentMarkup = buildHandoverDocumentMarkup(record, items);
+  const manualItems = normalizeStockOutManualItems(record);
+  let logoSrc = HANDOVER_LOGO_SRC;
+  try {
+    logoSrc = await loadAssetAsDataUrl(HANDOVER_LOGO_SRC);
+  } catch (error) {
+    console.warn("Could not embed handover logo in downloaded file:", error);
+  }
+  const documentMarkup = buildHandoverDocumentMarkup(record, items, manualItems, { logoSrc });
   const stylesheetText = Array.from(document.styleSheets)
     .map((styleSheet) => {
       try {
@@ -3327,7 +3967,7 @@ async function applyActivityCorrection(type, id, form) {
       model: String(form.elements["correctCategory-0"]?.value ?? "").trim().replace(/\s+/g, " "),
       name: String(form.elements["correctName-0"]?.value ?? "").trim().replace(/\s+/g, " "),
       sku: String(form.elements["correctSku-0"]?.value ?? "").trim().replace(/\s+/g, " "),
-      unit: String(form.elements["correctUnit-0"]?.value ?? "").trim().replace(/\s+/g, " "),
+      unit: String(form.elements["correctUnit-0"]?.value ?? "").trim().replace(/\s+/g, " ").toUpperCase(),
       location: String(form.elements["correctLocation-0"]?.value ?? "").trim().replace(/\s+/g, " ")
     };
     if (Object.values(correctedValues).some((value) => !value)) {
@@ -3527,10 +4167,12 @@ function renderInventoryPage() {
   const tableBody = document.querySelector("#inventory-table");
   const paginationSummary = document.querySelector("#inventory-pagination-summary");
   const pagination = document.querySelector("#inventory-pagination");
+  const exportButton = document.querySelector("#inventory-export-button");
   const searchInput = document.querySelector("#inventory-search");
   const brandFilter = document.querySelector("#inventory-brand-filter");
   const modelFilter = document.querySelector("#inventory-model-filter");
   const conditionFilter = document.querySelector("#inventory-condition-filter");
+  const statusFilter = document.querySelector("#inventory-status-filter");
   const pageSizeSelect = document.querySelector("#inventory-page-size");
   const clearFiltersButton = document.querySelector("#inventory-clear-filters");
   const pageKey = "ims-inventory-page";
@@ -3538,6 +4180,7 @@ function renderInventoryPage() {
   const brandKey = "ims-inventory-brand-filter";
   const modelKey = "ims-inventory-model-filter";
   const conditionKey = "ims-inventory-condition-filter";
+  const statusKey = "ims-inventory-status-filter";
   const pageSizeKey = "ims-inventory-page-size";
   localStorage.removeItem("ims-inventory-location-filter");
   const rawSearch = localStorage.getItem(searchKey) ?? searchInput?.value ?? "";
@@ -3548,13 +4191,11 @@ function renderInventoryPage() {
   const activeCategory = getValidFilterValue(modelFilter?.value, localStorage.getItem(modelKey), models);
   const rawConditionFilter = localStorage.getItem(conditionKey) ?? conditionFilter?.value ?? "all";
   const activeCondition = ["all", "new", "used"].includes(rawConditionFilter) ? rawConditionFilter : "all";
+  const rawStatusFilter = localStorage.getItem(statusKey) ?? "all";
+  const activeStatus = ["all", "low", "out"].includes(rawStatusFilter) ? rawStatusFilter : "all";
   const selectedPageSize = Number(localStorage.getItem(pageSizeKey) ?? pageSizeSelect?.value ?? String(INVENTORY_PAGE_SIZE));
   const pageSize = [8, 20, 50, 100].includes(selectedPageSize) ? selectedPageSize : INVENTORY_PAGE_SIZE;
-  const totalQuantity = data.inventory.reduce((sum, item) => sum + Math.max(item.quantity, 0), 0);
-  const totalOwnQuantity = data.inventory.reduce((sum, item) => sum + Math.max(item.ownQuantity ?? item.quantity ?? 0, 0), 0);
-  const totalConsignmentQuantity = data.inventory.reduce((sum, item) => sum + Math.max(item.consignmentQuantity ?? 0, 0), 0);
-  const totalConsignmentToRestock = data.inventory.reduce((sum, item) => sum + getConsignmentUsed(item), 0);
-  const lowStockItems = data.inventory.filter((item) => item.quantity <= (item.reorderLevel ?? 0));
+  const lowStockItems = data.inventory.filter((item) => getInventoryStatus(item).key === "low");
   const outOfStockItems = data.inventory.filter((item) => item.quantity <= 0);
 
   if (searchInput && searchInput.value !== rawSearch) {
@@ -3568,6 +4209,10 @@ function renderInventoryPage() {
     conditionFilter.value = activeCondition;
   }
 
+  if (statusFilter && statusFilter.value !== activeStatus) {
+    statusFilter.value = activeStatus;
+  }
+
   if (pageSizeSelect && String(pageSizeSelect.value) !== String(pageSize)) {
     pageSizeSelect.value = String(pageSize);
   }
@@ -3576,9 +4221,30 @@ function renderInventoryPage() {
 
   if (summary) {
     summary.innerHTML = `
-      <div class="summary-line"><strong>${data.inventory.length}</strong><span>Items in register</span></div>
-      <div class="summary-line"><strong>${totalQuantity}</strong><span>Total on hand (${totalOwnQuantity} LC Stock / ${totalConsignmentQuantity} consignment)</span></div>
-      <div class="summary-line"><strong>${totalConsignmentToRestock}</strong><span>Consignment to restock</span></div>
+      <div class="inventory-kpi-card inventory-kpi-purple">
+        ${renderInventoryKpiIcon("items")}
+        <div>
+          <span>Total Items</span>
+          <strong>${data.inventory.length}</strong>
+          <small>Active items</small>
+        </div>
+      </div>
+      <button class="inventory-kpi-card inventory-kpi-orange ${activeStatus === "low" ? "is-active" : ""}" type="button" data-inventory-status-filter="low" aria-pressed="${activeStatus === "low"}">
+        ${renderInventoryKpiIcon("low")}
+        <div>
+          <span>Low Stock Items</span>
+          <strong>${lowStockItems.length}</strong>
+          <small>Require attention</small>
+        </div>
+      </button>
+      <button class="inventory-kpi-card inventory-kpi-red ${activeStatus === "out" ? "is-active" : ""}" type="button" data-inventory-status-filter="out" aria-pressed="${activeStatus === "out"}">
+        ${renderInventoryKpiIcon("out")}
+        <div>
+          <span>Out of Stock</span>
+          <strong>${outOfStockItems.length}</strong>
+          <small>Unavailable items</small>
+        </div>
+      </button>
     `;
   }
 
@@ -3595,8 +4261,13 @@ function renderInventoryPage() {
     if (activeBrand !== "all" && item.brand !== activeBrand) return false;
     if (activeCategory !== "all" && item.model !== activeCategory) return false;
     if (activeCondition !== "all" && normalizeStockCondition(item.stockCondition) !== activeCondition) return false;
+    if (activeStatus !== "all" && getInventoryStatus(item).key !== activeStatus) return false;
     return true;
   });
+
+  if (exportButton) {
+    exportButton.onclick = () => downloadInventoryExcel(filteredInventory);
+  }
 
   const totalPages = Math.max(1, Math.ceil(filteredInventory.length / pageSize));
   const currentPage = Math.min(Math.max(Number(localStorage.getItem(pageKey) || "1"), 1), totalPages);
@@ -3606,7 +4277,8 @@ function renderInventoryPage() {
   const hasActiveFilters = Boolean(searchTerm)
     || activeBrand !== "all"
     || activeCategory !== "all"
-    || activeCondition !== "all";
+    || activeCondition !== "all"
+    || activeStatus !== "all";
 
   paginationSummary.textContent = filteredInventory.length
     ? `Showing ${startIndex + 1}-${Math.min(endIndex, filteredInventory.length)} of ${filteredInventory.length}${hasActiveFilters ? " matching" : ""} items`
@@ -3627,11 +4299,12 @@ function renderInventoryPage() {
           </td>
           <td>${escapeHtml(item.sku)}</td>
           <td>${renderInventoryBalanceCell(item)}</td>
-          <td>${escapeHtml(item.unit ?? "-")}</td>
+          <td>${escapeHtml(formatUnitDisplay(item.unit))}</td>
           <td>${renderConsignmentRestockCell(item)}</td>
+          <td>${renderInventoryStatusBadge(item)}</td>
         </tr>
       `).join("")
-    : `<tr><td colspan="7"><div class="empty-state">${
+    : `<tr><td colspan="8"><div class="empty-state">${
         hasActiveFilters
           ? "No inventory items matched your current search or filter."
           : "No inventory items yet. Add your first stock record to start operations tracking."
@@ -3719,6 +4392,15 @@ function renderInventoryPage() {
     conditionFilter.dataset.bound = "true";
   }
 
+  if (statusFilter && !statusFilter.dataset.bound) {
+    statusFilter.addEventListener("change", () => {
+      localStorage.setItem(statusKey, statusFilter.value);
+      localStorage.setItem(pageKey, "1");
+      renderInventoryPage();
+    });
+    statusFilter.dataset.bound = "true";
+  }
+
   if (pageSizeSelect && !pageSizeSelect.dataset.bound) {
     pageSizeSelect.addEventListener("change", () => {
       localStorage.setItem(pageSizeKey, pageSizeSelect.value);
@@ -3728,11 +4410,21 @@ function renderInventoryPage() {
     pageSizeSelect.dataset.bound = "true";
   }
 
+  summary?.querySelectorAll("[data-inventory-status-filter]").forEach((card) => {
+    card.addEventListener("click", () => {
+      const selectedStatus = card.dataset.inventoryStatusFilter;
+      localStorage.setItem(statusKey, activeStatus === selectedStatus ? "all" : selectedStatus);
+      if (statusFilter) statusFilter.value = activeStatus === selectedStatus ? "all" : selectedStatus;
+      localStorage.setItem(pageKey, "1");
+      renderInventoryPage();
+    });
+  });
+
   if (clearFiltersButton && !clearFiltersButton.dataset.bound) {
     clearFiltersButton.addEventListener("click", () => {
-      [searchKey, "ims-inventory-filter", brandKey, modelKey, conditionKey].forEach((key) => localStorage.removeItem(key));
+      [searchKey, "ims-inventory-filter", brandKey, modelKey, conditionKey, statusKey].forEach((key) => localStorage.removeItem(key));
       if (searchInput) searchInput.value = "";
-      [brandFilter, modelFilter, conditionFilter].forEach((filter) => {
+      [brandFilter, modelFilter, conditionFilter, statusFilter].forEach((filter) => {
         if (filter) filter.value = "all";
       });
       localStorage.setItem(pageKey, "1");
@@ -3748,15 +4440,17 @@ function renderActivityHistoryPage() {
   const activityTableBody = document.querySelector("#activity-history-table-body");
   const activitySummary = document.querySelector("#activity-history-summary");
   const activityPagination = document.querySelector("#activity-history-pagination");
+  const searchInput = document.querySelector("#activity-search");
   const typeFilter = document.querySelector("#activity-type-filter");
   const actorFilter = document.querySelector("#activity-actor-filter");
   const dateFromFilter = document.querySelector("#activity-date-from-filter");
   const dateToFilter = document.querySelector("#activity-date-to-filter");
   const pageSizeSelect = document.querySelector("#activity-page-size");
   const clearFiltersButton = document.querySelector("#activity-clear-filters");
-  if (!activityTableBody || !activitySummary || !activityPagination || !typeFilter || !actorFilter || !dateFromFilter || !dateToFilter || !pageSizeSelect) return;
+  if (!activityTableBody || !activitySummary || !activityPagination || !searchInput || !typeFilter || !actorFilter || !dateFromFilter || !dateToFilter || !pageSizeSelect) return;
 
   const pageKey = "ims-activity-page";
+  const searchKey = "ims-activity-search";
   const pageSizeKey = "ims-activity-page-size";
   const selectedPageSize = Number(localStorage.getItem(pageSizeKey) ?? pageSizeSelect.value ?? String(INVENTORY_PAGE_SIZE));
   const pageSize = [8, 20, 50, 100].includes(selectedPageSize) ? selectedPageSize : INVENTORY_PAGE_SIZE;
@@ -3766,11 +4460,16 @@ function renderActivityHistoryPage() {
   localStorage.removeItem("ims-activity-actor-filter");
   const allEvents = getActivityEvents(data);
   const actors = Array.from(new Set(allEvents.map((event) => event.actor).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const rawSearch = localStorage.getItem(searchKey) ?? searchInput.value ?? "";
+  const searchTerm = rawSearch.trim().toLowerCase();
   const selectedType = typeFilter.value || "all";
   const selectedActor = actorFilter.value || "all";
   const selectedDateFrom = dateFromFilter.value || localStorage.getItem(dateFromKey) || "";
   const selectedDateTo = dateToFilter.value || localStorage.getItem(dateToKey) || "";
 
+  if (searchInput.value !== rawSearch) {
+    searchInput.value = rawSearch;
+  }
   if (typeFilter.value !== selectedType) {
     typeFilter.value = selectedType;
   }
@@ -3803,6 +4502,18 @@ function renderActivityHistoryPage() {
     const eventDate = new Date(event.createdAt);
     const fromDate = dateFrom ? new Date(`${dateFrom}T00:00:00`) : null;
     const toDate = dateTo ? new Date(`${dateTo}T23:59:59.999`) : null;
+    const searchableText = [
+      event.title,
+      event.type,
+      event.actor,
+      event.quantityText,
+      event.detail,
+      event.sourceId,
+      ...(event.itemLines ?? []),
+      ...(event.detailRows ?? []).flatMap((row) => [row.label, row.value]),
+      ...(event.actions ?? []).flatMap((action) => [action.label, action.stockOutId])
+    ].filter(Boolean).join(" ").toLowerCase();
+    if (searchTerm && !searchableText.includes(searchTerm)) return false;
     if (selectedType !== "all" && event.type !== selectedType) return false;
     if (actorFilter.value !== "all" && event.actor !== actorFilter.value) return false;
     if (Number.isNaN(eventDate.getTime())) return !fromDate && !toDate;
@@ -3815,6 +4526,7 @@ function renderActivityHistoryPage() {
 
   const hasActiveActivityFilters = selectedType !== "all"
     || actorFilter.value !== "all"
+    || Boolean(searchTerm)
     || Boolean(dateFromFilter.value || dateToFilter.value);
 
   const totalPages = Math.max(1, Math.ceil(filteredEvents.length / pageSize));
@@ -3934,6 +4646,15 @@ function renderActivityHistoryPage() {
     button.dataset.bound = "true";
   });
 
+  if (!searchInput.dataset.bound) {
+    searchInput.addEventListener("input", () => {
+      localStorage.setItem(searchKey, searchInput.value);
+      localStorage.setItem(pageKey, "1");
+      renderActivityHistoryPage();
+    });
+    searchInput.dataset.bound = "true";
+  }
+
   if (!typeFilter.dataset.bound) {
     typeFilter.addEventListener("change", () => {
       localStorage.setItem(pageKey, "1");
@@ -3969,8 +4690,9 @@ function renderActivityHistoryPage() {
 
   if (clearFiltersButton && !clearFiltersButton.dataset.bound) {
     clearFiltersButton.addEventListener("click", () => {
-      [dateFromKey, dateToKey].forEach((key) => localStorage.removeItem(key));
+      [searchKey, dateFromKey, dateToKey].forEach((key) => localStorage.removeItem(key));
       localStorage.setItem(pageKey, "1");
+      searchInput.value = "";
       typeFilter.value = "all";
       actorFilter.value = "all";
       dateFromFilter.value = "";
@@ -3996,7 +4718,9 @@ function initCreateStockPage() {
   const modelSelect = document.querySelector("#create-model-select");
   const newCategoryField = document.querySelector("#create-new-model-field");
   const newCategoryInput = document.querySelector("#create-model-new");
+  const unitInput = inventoryForm?.querySelector('input[name="unit"]');
   if (!content || !inventoryForm || !modelSelect || !newCategoryField || !newCategoryInput) return;
+  bindUppercaseInput(unitInput);
 
   const newCategoryValue = "__new_category__";
   const getCategories = () => getUniqueInventoryValues(loadData().inventory, "model");
@@ -4058,7 +4782,7 @@ function initCreateStockPage() {
         model,
         name: String(form.get("name") ?? "").trim(),
         sku: String(form.get("sku") ?? "").trim(),
-        unit: String(form.get("unit") ?? "").trim(),
+        unit: String(form.get("unit") ?? "").trim().toUpperCase(),
         quantity,
         ownQuantity,
         consignmentQuantity,
@@ -4083,6 +4807,45 @@ function initCreateStockPage() {
     });
     inventoryForm.dataset.bound = "true";
   }
+}
+
+function initManageUsersPage() {
+  const content = document.querySelector(".main-shell");
+  const form = document.querySelector("#create-user-form");
+  if (!content || !form || form.dataset.bound) return;
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = form.querySelector("button[type='submit']");
+    const formData = new FormData(form);
+    const password = String(formData.get("password") ?? "");
+    const confirmPassword = String(formData.get("confirmPassword") ?? "");
+
+    if (password !== confirmPassword) {
+      showNotice(content, "Passwords do not match.");
+      return;
+    }
+
+    const payload = {
+      username: String(formData.get("username") ?? "").trim().toLowerCase(),
+      role: String(formData.get("role") ?? "").trim(),
+      password
+    };
+
+    submitButton.disabled = true;
+    submitButton.textContent = "Creating...";
+    try {
+      const user = await createSystemUser(payload);
+      form.reset();
+      showToast(`User account created successfully: ${getUserDisplayName(user)} (${getUserRole(user)}).`, "success");
+    } catch (error) {
+      showNotice(content, error.message || "The user could not be created.");
+    } finally {
+      submitButton.disabled = false;
+      submitButton.textContent = "Create User";
+    }
+  });
+  form.dataset.bound = "true";
 }
 
 function initRelocateStockPage() {
@@ -4386,7 +5149,7 @@ function initAddStockPage() {
             <td data-adjustment-current-stock>${renderStockBreakdownChips(item)}</td>
             <td data-adjustment-allocation>${renderStockInAllocationChips(item, quantity, receivingPurpose)}</td>
             <td><input class="stock-out-qty-input" name="adjustmentQuantity" type="number" min="1" step="1" value="${quantity}"></td>
-            <td>${escapeHtml(item.unit ?? "-")}</td>
+            <td>${escapeHtml(formatUnitDisplay(item.unit))}</td>
             <td><button type="button" class="button-link stock-out-line-remove" data-adjustment-remove>Remove</button></td>
           </tr>
         `);
@@ -4475,10 +5238,19 @@ function initDrawStockPage() {
   const receiverInput = document.querySelector("#receiver-input");
   const receiverPickerList = document.querySelector("#receiver-picker-list");
   const addStockOutLineButton = document.querySelector("#add-stock-out-line");
+  const addManualStockLineButton = document.querySelector("#add-manual-stock-line");
+  const manualDescriptionInput = document.querySelector("#manual-stock-description");
+  const manualCodeInput = document.querySelector("#manual-stock-code");
+  const manualBrandInput = document.querySelector("#manual-stock-brand");
+  const manualCategoryInput = document.querySelector("#manual-stock-category");
+  const manualQuantityInput = document.querySelector("#manual-stock-quantity");
+  const manualUnitInput = document.querySelector("#manual-stock-unit");
+  const manualRemarksInput = document.querySelector("#manual-stock-remarks");
   const stockOutForm = document.querySelector("#stock-out-form");
   if (!content || !stockOutItemSelect || !stockOutQuantityInput || !stockOutLines || !stockOutEmpty || !stockOutSummary || !addStockOutLineButton || !stockOutForm) {
     return;
   }
+  bindUppercaseInput(manualUnitInput);
 
   const updateStockOutSourceOptions = (item) => {
     if (!stockOutSourceSelect || !("options" in stockOutSourceSelect)) return;
@@ -4564,15 +5336,81 @@ function initDrawStockPage() {
             <span class="consignment-use-hint" data-stock-out-consignment-notice hidden></span>
           </td>
           <td>${escapeHtml(item.unit ?? "-")}</td>
+          <td class="issue-line-remarks">-</td>
           <td><button type="button" class="button-link stock-out-line-remove" data-stock-out-remove>Remove</button></td>
         </tr>
       `);
     }
 
-    stockOutQuantityInput.value = "0";
+    stockOutQuantityInput.value = "1";
     updateStockOutSourceOptions(item);
     renderStockOutIssueList(stockOutLines, stockOutEmpty, stockOutSummary, currentData.inventory);
   };
+
+  const resetManualStockFields = () => {
+    if (manualDescriptionInput) manualDescriptionInput.value = "";
+    if (manualCodeInput) manualCodeInput.value = "";
+    if (manualBrandInput) manualBrandInput.value = "";
+    if (manualCategoryInput) manualCategoryInput.value = "";
+    if (manualQuantityInput) manualQuantityInput.value = "1";
+    if (manualUnitInput) manualUnitInput.value = "";
+    if (manualRemarksInput) manualRemarksInput.value = "";
+  };
+
+  const addManualStockLine = () => {
+    const description = String(manualDescriptionInput?.value ?? "").trim().replace(/\s+/g, " ");
+    const stockCode = String(manualCodeInput?.value ?? "").trim().replace(/\s+/g, " ");
+    const brand = String(manualBrandInput?.value ?? "").trim().replace(/\s+/g, " ");
+    const category = String(manualCategoryInput?.value ?? "").trim().replace(/\s+/g, " ");
+    const quantity = Math.floor(Number(manualQuantityInput?.value ?? "0"));
+    const rawUnit = String(manualUnitInput?.value ?? "").trim().replace(/\s+/g, " ");
+    const unit = rawUnit ? rawUnit.toUpperCase() : "";
+    const remarks = String(manualRemarksInput?.value ?? "").replace(/\r\n?/g, "\n").trim();
+
+    if (!description || quantity <= 0) {
+      showNotice(content, "Enter an additional item description and valid quantity before adding it to the issue list.");
+      return false;
+    }
+
+    stockOutLines.insertAdjacentHTML("beforeend", `
+      <tr data-stock-out-item-row data-manual-stock-row data-item-id="" data-issue-source="manual"
+        data-manual-description="${escapeHtml(description)}"
+        data-manual-stock-code="${escapeHtml(stockCode)}"
+        data-manual-brand="${escapeHtml(brand)}"
+        data-manual-category="${escapeHtml(category)}"
+        data-manual-unit="${escapeHtml(unit)}">
+        <td><strong>${escapeHtml(description)}</strong><br><span class="muted">${escapeHtml(brand || "-")} / ${escapeHtml(category || "-")}</span></td>
+        <td>${escapeHtml(stockCode || "-")}</td>
+        <td data-stock-out-available>Not tracked</td>
+        <td><span class="inline-stock-chip inline-stock-chip-total">${escapeHtml(formatStockPurposeLabel("manual"))}</span></td>
+        <td>
+          <input class="stock-out-qty-input" name="issueQuantity" type="number" min="1" step="1" value="${quantity}">
+          <span class="consignment-use-hint" data-stock-out-consignment-notice hidden></span>
+        </td>
+        <td>${escapeHtml(formatUnitDisplay(unit))}</td>
+        <td class="issue-line-remarks" data-manual-remarks-cell></td>
+        <td><button type="button" class="button-link stock-out-line-remove" data-stock-out-remove>Remove</button></td>
+      </tr>
+    `);
+    const addedRow = stockOutLines.querySelector("[data-stock-out-item-row]:last-child");
+    if (addedRow) {
+      addedRow.dataset.manualRemarks = remarks;
+      const remarksCell = addedRow.querySelector("[data-manual-remarks-cell]");
+      if (remarksCell) remarksCell.textContent = remarks || "-";
+    }
+    resetManualStockFields();
+    renderStockOutIssueList(stockOutLines, stockOutEmpty, stockOutSummary, loadData().inventory);
+    return true;
+  };
+
+  const hasPendingManualStockLine = () => [
+    manualDescriptionInput,
+    manualCodeInput,
+    manualBrandInput,
+    manualCategoryInput,
+    manualUnitInput,
+    manualRemarksInput
+  ].some((input) => String(input?.value ?? "").trim());
 
   if (!addStockOutLineButton.dataset.bound) {
     addStockOutLineButton.addEventListener("click", (event) => {
@@ -4581,6 +5419,15 @@ function initDrawStockPage() {
       addStockOutLine();
     });
     addStockOutLineButton.dataset.bound = "true";
+  }
+
+  if (addManualStockLineButton && !addManualStockLineButton.dataset.bound) {
+    addManualStockLineButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      addManualStockLine();
+    });
+    addManualStockLineButton.dataset.bound = "true";
   }
 
   if (stockOutForm && !stockOutForm.dataset.bound) {
@@ -4691,6 +5538,11 @@ function initDrawStockPage() {
         addStockOutLine();
         return;
       }
+      if (event.target.closest("#add-manual-stock-line")) {
+        event.preventDefault();
+        addManualStockLine();
+        return;
+      }
       const removeButton = event.target.closest("[data-stock-out-remove]");
       if (removeButton) {
         removeButton.closest("[data-stock-out-item-row]")?.remove();
@@ -4707,18 +5559,33 @@ function initDrawStockPage() {
 
     stockOutForm.addEventListener("submit", async (event) => {
       event.preventDefault();
+      if (hasPendingManualStockLine() && !addManualStockLine()) {
+        return;
+      }
       const form = new FormData(stockOutForm);
       const nextData = loadData();
       const currentUser = getCurrentUser();
       const lineItems = Array.from(stockOutForm.querySelectorAll("[data-stock-out-item-row]"))
+        .filter((line) => line.dataset.issueSource !== "manual")
         .map((line) => ({
           itemId: line.dataset.itemId ?? "",
           issueSource: line.dataset.issueSource === "consignment" ? "consignment" : "own",
           quantity: Number(line.querySelector('input[name="issueQuantity"]')?.value ?? "0")
         }))
         .filter((line) => line.itemId && line.quantity > 0);
+      const manualItems = Array.from(stockOutForm.querySelectorAll("[data-manual-stock-row]"))
+        .map((line) => ({
+          description: String(line.dataset.manualDescription ?? "").trim(),
+          stockCode: String(line.dataset.manualStockCode ?? "").trim(),
+          brand: String(line.dataset.manualBrand ?? "").trim(),
+          category: String(line.dataset.manualCategory ?? "").trim(),
+          unit: String(line.dataset.manualUnit ?? "").trim(),
+          remarks: String(line.dataset.manualRemarks ?? "").trim(),
+          quantity: Number(line.querySelector('input[name="issueQuantity"]')?.value ?? "0")
+        }))
+        .filter((line) => line.description && line.quantity > 0);
 
-      if (!lineItems.length) {
+      if (!lineItems.length && !manualItems.length) {
         showNotice(content, "Add at least one stock-out item with a valid quantity.");
         return;
       }
@@ -4754,7 +5621,14 @@ function initDrawStockPage() {
           brand: item?.brand ?? "Generic",
           model: item?.model ?? "Standard"
         };
-      });
+      }).concat(manualItems.map((line) => ({
+        ...line,
+        issueSource: "manual",
+        name: line.description,
+        sku: line.stockCode || "-",
+        brand: line.brand || "-",
+        model: line.category || "-"
+      })));
       const confirmed = await showStockOutConfirmationDialog(confirmationLines, {
         projectTitle: form.get("projectTitle").trim(),
         receivedBy: form.get("receivedBy").trim()
@@ -4766,7 +5640,8 @@ function initDrawStockPage() {
         const result = await sendBackendAction("draw-stock", {
           projectTitle: form.get("projectTitle").trim(),
           receivedBy: form.get("receivedBy").trim(),
-          lines: lineItems
+          lines: lineItems,
+          manualItems
         });
         stockOutRecord = result.stockOutRecord;
       } catch (error) {
@@ -4801,12 +5676,13 @@ function renderHandoverPage() {
   }
 
   const items = normalizeStockOutItems(record, data.inventory);
+  const manualItems = normalizeStockOutManualItems(record);
   container.innerHTML = `
     <div class="toolbar">
       <button class="button-link" type="button" onclick="window.print()">Print</button>
       <button class="button-link" type="button" id="handover-download">Download</button>
     </div>
-    ${buildHandoverDocumentMarkup(record, items)}
+    ${buildHandoverDocumentMarkup(record, items, manualItems)}
   `;
 
   const downloadButton = document.querySelector("#handover-download");
@@ -4902,6 +5778,8 @@ function renderActivityDetailPage() {
     ${renderActivityAuditTrailSection(record, data, type, id)}
   `;
 
+  container.querySelectorAll('input[name^="correctUnit-"]').forEach((input) => bindUppercaseInput(input));
+
   const correctionForm = container.querySelector("#correction-form");
   if (correctionForm && !correctionForm.dataset.bound) {
     const correctionGate = container.querySelector(".correction-gate");
@@ -4963,7 +5841,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (currentUser) {
     await initializeBackendData();
   }
-  if (["inventory", "activity-history", "activity-detail", "add-stock", "draw-stock", "relocate-stock"].includes(document.body.dataset.page)) {
+  if (["inventory", "activity-history", "activity-detail", "add-stock", "create-stock", "draw-stock", "relocate-stock", "manage-users"].includes(document.body.dataset.page)) {
     initSidebar();
   }
   initSectionNavigation();
@@ -4990,6 +5868,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
   if (document.body.dataset.page === "create-stock") {
     initCreateStockPage();
+  }
+  if (document.body.dataset.page === "manage-users") {
+    initManageUsersPage();
   }
   if (document.body.dataset.page === "handover") {
     renderHandoverPage();

@@ -21,13 +21,13 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body data-page="inventory">
-  <div class="app-shell">
+  <div class="app-shell inventory-control-shell">
     <div class="sidebar-backdrop" data-sidebar-close></div>
     <aside class="sidebar" id="app-sidebar">
       <button class="sidebar-close" type="button" data-sidebar-close aria-label="Close navigation">&times;</button>
 
       <div class="brand-block">
-        <div class="brand-mark">IMS</div>
+        <div class="brand-mark" aria-hidden="true">◇</div>
         <div>
           <p class="eyebrow">Inventory Workspace</p>
           <h1>Inventory Hub</h1>
@@ -39,65 +39,67 @@
         <p class="nav-section-label">Navigation</p>
         <div class="nav-card">
           <a class="nav-link" href="index.html">
-            <span class="nav-icon">HM</span>
+            <span class="nav-icon" aria-hidden="true">⌂</span>
             <span class="nav-copy">
               <span class="nav-title">Home</span>
               <span class="nav-subtitle">Access core inventory workflows</span>
             </span>
           </a>
           <a class="nav-link active" href="inventory.html">
-            <span class="nav-icon">IM</span>
+            <span class="nav-icon" aria-hidden="true">▤</span>
             <span class="nav-copy">
               <span class="nav-title">Inventory</span>
               <span class="nav-subtitle">Central stock register and availability</span>
             </span>
           </a>
+        </div>
+      </nav>
+
+      <nav class="nav-section" aria-label="Inventory operations">
+        <div class="nav-card">
           <a class="nav-link" href="add-stock.html">
-            <span class="nav-icon">IN</span>
+            <span class="nav-icon" aria-hidden="true">＋</span>
             <span class="nav-copy">
               <span class="nav-title">Add Stocks</span>
               <span class="nav-subtitle">Record stock-in transactions</span>
             </span>
           </a>
           <a class="nav-link" href="draw-stock.html">
-            <span class="nav-icon">OUT</span>
+            <span class="nav-icon" aria-hidden="true">−</span>
             <span class="nav-copy">
               <span class="nav-title">Draw Stocks</span>
               <span class="nav-subtitle">Process stock-out transactions</span>
             </span>
           </a>
           <a class="nav-link" href="relocate-stock.html">
-            <span class="nav-icon">MOV</span>
+            <span class="nav-icon" aria-hidden="true">⇄</span>
             <span class="nav-copy">
               <span class="nav-title">Relocate Stock</span>
               <span class="nav-subtitle">Move items between storage locations</span>
             </span>
           </a>
+        </div>
+      </nav>
+
+      <nav class="nav-section" aria-label="Reports">
+        <div class="nav-card">
           <a class="nav-link" href="activity-history.html">
-            <span class="nav-icon">LOG</span>
+            <span class="nav-icon" aria-hidden="true">↺</span>
             <span class="nav-copy">
               <span class="nav-title">Activity History</span>
               <span class="nav-subtitle">Review transaction audit records</span>
             </span>
           </a>
-        </div>
-      </nav>
-
-      <nav class="nav-section" aria-label="Page sections">
-        <p class="nav-section-label">Jump To</p>
-        <div class="nav-card nav-card-secondary">
           <a class="nav-link nav-link-secondary" href="#executive-overview">
-            <span class="nav-icon">01</span>
+            <span class="nav-icon" aria-hidden="true">△</span>
             <span class="nav-copy">
               <span class="nav-title">Overview</span>
-              <span class="nav-subtitle">Current inventory position</span>
             </span>
           </a>
           <a class="nav-link nav-link-secondary" href="#inventory-register-card">
-            <span class="nav-icon">02</span>
+            <span class="nav-icon" aria-hidden="true">◷</span>
             <span class="nav-copy">
               <span class="nav-title">Register</span>
-              <span class="nav-subtitle">Search, filter, and verify items</span>
             </span>
           </a>
         </div>
@@ -105,24 +107,28 @@
     </aside>
 
     <main class="main-shell">
-      <header class="topbar" id="executive-overview">
+      <header class="topbar inventory-hero" id="executive-overview">
         <div class="topbar-copy">
-          <p class="eyebrow">Inventory Control Center</p>
-          <h2>Centralized inventory register</h2>
-          <p class="hero-copy">Monitor LC Stock and consignment balances, verify item availability, and maintain a controlled view of operational inventory across all recorded stock locations.</p>
+          <nav class="breadcrumb" aria-label="Breadcrumb">
+            <a href="index.html">Inventory</a>
+            <span aria-hidden="true">›</span>
+            <span>Stock Master</span>
+          </nav>
+          <h2>Stock Master</h2>
+          <p class="hero-copy">Search and manage all inventory items across your locations. View stock levels, item details, and availability in real-time.</p>
         </div>
         <div class="topbar-actions">
+          <button class="button-link button-link-ghost inventory-menu-button" type="button" data-sidebar-toggle>Menu</button>
           <a class="button-link" href="index.html">Back to Home</a>
+          <a class="button-link button-link-strong" href="create-stock.html">+ New Item</a>
+          <button class="button-link button-link-strong" type="button" id="inventory-export-button">Export Excel</button>
         </div>
       </header>
 
+      <section class="inventory-kpis" id="inventory-summary" aria-label="Inventory summary"></section>
+
       <section class="panel" id="inventory-register-card">
         <div class="panel-header">
-          <div>
-            <p class="eyebrow">Stock Master Register</p>
-            <h3>Inventory records and availability</h3>
-            <p class="section-copy">Search and filter the master stock list to validate item details, stock codes, available balances, and consignment replenishment requirements.</p>
-          </div>
           <div class="register-toolbar">
             <div class="table-filters" aria-label="Inventory filters">
               <label class="filter-field">
@@ -155,6 +161,14 @@
                 </select>
               </label>
               <label class="filter-field filter-field-select">
+                <span class="filter-label">Status</span>
+                <select id="inventory-status-filter">
+                  <option value="all">All statuses</option>
+                  <option value="low">Low stock</option>
+                  <option value="out">Out of stock</option>
+                </select>
+              </label>
+              <label class="filter-field filter-field-select">
                 <span class="filter-label">Rows</span>
                 <select id="inventory-page-size">
                   <option value="8">8 rows</option>
@@ -167,7 +181,9 @@
                 <button type="button" class="button-link button-link-ghost filter-reset" id="inventory-clear-filters">Clear Filters</button>
               </div>
             </div>
-            <div id="inventory-pagination-summary" class="table-summary"></div>
+            <div class="inventory-table-tools">
+              <div id="inventory-pagination-summary" class="table-summary"></div>
+            </div>
           </div>
         </div>
         <div class="table-wrap elevated-table">
@@ -181,6 +197,7 @@
                 <th>Stock Balance</th>
                 <th>Unit</th>
                 <th>Location</th>
+                <th>Status</th>
               </tr>
             </thead>
             <tbody id="inventory-table"></tbody>
@@ -192,6 +209,7 @@
     </main>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js" defer></script>
   <script src="app.js?v=20260506-clear-data" defer></script>
 </body>
 </html>

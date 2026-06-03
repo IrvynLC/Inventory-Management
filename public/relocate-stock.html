@@ -19,6 +19,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="stock-workflow.css">
 </head>
 <body data-page="relocate-stock">
   <div class="app-shell">
@@ -87,8 +88,8 @@
     <main class="main-shell">
       <header class="topbar">
         <div class="topbar-copy">
-          <p class="eyebrow">Warehouse Movement</p>
-          <h2>Relocate stock</h2>
+          <p class="breadcrumb"><a href="inventory.html">Inventory</a><span>&gt;</span><span>Relocate Stock</span></p>
+          <h2>Relocate Stock</h2>
           <p class="hero-copy">Move an existing stock record to a new storage location while keeping an audit trail of the previous and updated location.</p>
         </div>
         <div class="topbar-actions">
@@ -96,15 +97,15 @@
         </div>
       </header>
 
-      <section class="panel form-panel">
-        <div class="panel-header panel-header-tight">
-          <div>
-            <p class="eyebrow">Relocation Entry</p>
-            <h3>Update item location</h3>
-            <p class="section-copy">Select the exact item record, confirm its current storage location, then enter the new warehouse location.</p>
+      <form id="relocate-form" class="stack-form stock-workflow relocate-stock-workflow">
+        <section class="panel form-panel stock-workflow-step-panel">
+          <div class="panel-header panel-header-tight stock-workflow-step-header">
+            <span class="stock-workflow-step-number">1</span>
+            <div>
+              <h3>Item and Location</h3>
+              <p class="section-copy">Select the exact item record, confirm its current storage location, then enter the new warehouse location.</p>
+            </div>
           </div>
-        </div>
-        <form id="relocate-form" class="stack-form">
           <div class="field-grid">
             <div class="stock-picker-field">
               <label for="relocate-stock-picker-search">Item</label>
@@ -128,17 +129,30 @@
               New location
               <input id="relocate-new-location" type="text" placeholder="Rack C-03 / D_Floor / Main Store" required>
             </label>
+          </div>
+        </section>
+
+        <section class="panel form-panel stock-workflow-step-panel">
+          <div class="panel-header panel-header-tight stock-workflow-step-header">
+            <span class="stock-workflow-step-number">2</span>
+            <div>
+              <h3>Movement Notes</h3>
+              <p class="section-copy">Add optional remarks before saving the location change. Stock balances remain unchanged.</p>
+            </div>
+          </div>
+          <div class="field-grid relocate-stock-notes-grid">
             <label>
               Remarks
               <input id="relocate-remarks" type="text" placeholder="Warehouse tidy / shelf rearrangement">
             </label>
           </div>
-          <div class="form-actions">
-            <button type="submit" class="button-primary">Save Relocation</button>
-            <span class="form-hint">Only the storage location changes. Stock balances remain unchanged.</span>
-          </div>
-        </form>
-      </section>
+        </section>
+
+        <div class="form-actions stock-workflow-submit-row">
+          <button type="submit" class="button-primary">Save Relocation</button>
+          <span class="form-hint">Only the storage location changes. Stock balances remain unchanged.</span>
+        </div>
+      </form>
     </main>
   </div>
 
