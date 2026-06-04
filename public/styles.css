@@ -4672,6 +4672,12 @@ button:hover {
   border-color: rgba(139, 92, 42, 0.24);
 }
 
+.stock-condition-badge-internal {
+  background: rgba(31, 91, 150, 0.12);
+  color: #174f86;
+  border-color: rgba(31, 91, 150, 0.24);
+}
+
 .stock-internal-badge {
   display: inline-flex;
   align-items: center;

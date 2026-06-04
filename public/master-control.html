@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Master Control | Inventory Management System</title>
+  <script>
+    if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    window.scrollTo(0, 0);
+    window.addEventListener("load", () => {
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      window.scrollTo(0, 0);
+    });
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="stock-workflow.css?v=20260603-multi-condition">
+</head>
+<body data-page="master-control">
+  <div class="app-shell">
+    <div class="sidebar-backdrop" data-sidebar-close></div>
+    <aside class="sidebar" id="app-sidebar">
+      <button class="sidebar-close" type="button" data-sidebar-close aria-label="Close navigation">&times;</button>
+
+      <div class="brand-block">
+        <div class="brand-mark">IMS</div>
+        <div>
+          <p class="eyebrow">Master Workspace</p>
+          <h1>Master Control</h1>
+          <p class="brand-meta">Private inventory governance</p>
+        </div>
+      </div>
+
+      <nav class="nav-section" aria-label="Primary navigation">
+        <p class="nav-section-label">Navigation</p>
+        <div class="nav-card">
+          <a class="nav-link" href="index.html">
+            <span class="nav-icon">HM</span>
+            <span class="nav-copy">
+              <span class="nav-title">Home</span>
+              <span class="nav-subtitle">Access core inventory workflows</span>
+            </span>
+          </a>
+          <a class="nav-link" href="inventory.html">
+            <span class="nav-icon">IM</span>
+            <span class="nav-copy">
+              <span class="nav-title">Inventory</span>
+              <span class="nav-subtitle">Central stock register and availability</span>
+            </span>
+          </a>
+          <a class="nav-link active" href="master-control.html">
+            <span class="nav-icon">MS</span>
+            <span class="nav-copy">
+              <span class="nav-title">Master Control</span>
+              <span class="nav-subtitle">Private item and balance corrections</span>
+            </span>
+          </a>
+          <a class="nav-link" href="activity-history.html">
+            <span class="nav-icon">LOG</span>
+            <span class="nav-copy">
+              <span class="nav-title">Activity History</span>
+              <span class="nav-subtitle">Review private and normal audit records</span>
+            </span>
+          </a>
+          <a class="nav-link" href="manage-users.html">
+            <span class="nav-icon">USR</span>
+            <span class="nav-copy">
+              <span class="nav-title">Create User</span>
+              <span class="nav-subtitle">Add user accounts and roles</span>
+            </span>
+          </a>
+        </div>
+      </nav>
+    </aside>
+
+    <main class="main-shell">
+      <header class="topbar">
+        <div class="topbar-copy">
+          <p class="breadcrumb"><a href="index.html">Home</a><span>&gt;</span><span>Master Control</span></p>
+          <h2>Master Control</h2>
+          <p class="hero-copy">Correct item information and stock balances through a private Master-only audit record.</p>
+        </div>
+        <div class="topbar-actions">
+          <a class="button-link" href="index.html">Back to Home</a>
+        </div>
+      </header>
+
+      <form id="master-control-form" class="stack-form stock-workflow">
+        <section class="panel form-panel stock-workflow-step-panel">
+          <div class="panel-header panel-header-tight stock-workflow-step-header">
+            <span class="stock-workflow-step-number">1</span>
+            <div>
+              <h3>Select Item</h3>
+              <p class="section-copy">Choose the exact stock record to correct.</p>
+            </div>
+          </div>
+          <div class="field-grid">
+            <div class="stock-picker-field">
+              <label for="master-stock-picker-search">Item</label>
+              <select id="master-item" class="stock-native-select" required tabindex="-1" aria-hidden="true"></select>
+              <div class="stock-picker" data-master-stock-picker>
+                <button type="button" class="stock-picker-button" id="master-stock-picker-button" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="stock-picker-button-title">Select an item</span>
+                  <span class="stock-picker-button-meta">Search by description, SKU, brand, category, or condition</span>
+                </button>
+                <div class="stock-picker-popover" id="master-stock-picker-popover" hidden>
+                  <input id="master-stock-picker-search" class="stock-picker-search" type="search" placeholder="Search item, SKU, brand, category, or condition" autocomplete="off">
+                  <div class="stock-picker-list" id="master-stock-picker-list" role="listbox" aria-label="Inventory items"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel form-panel stock-workflow-step-panel">
+          <div class="panel-header panel-header-tight stock-workflow-step-header">
+            <span class="stock-workflow-step-number">2</span>
+            <div>
+              <h3>Correct Details</h3>
+              <p class="section-copy">Update the item master data and current balances.</p>
+            </div>
+          </div>
+          <div class="field-grid">
+            <label>Brand<input id="master-brand" name="brand" type="text" required></label>
+            <label>Category<input id="master-model" name="model" type="text" required></label>
+            <label>Description<input id="master-name" name="name" type="text" required></label>
+            <label>Stock Code<input id="master-sku" name="sku" type="text" required></label>
+            <label>Unit<input id="master-unit" name="unit" type="text" required></label>
+            <label>Location<input id="master-location" name="location" type="text" required></label>
+            <label>LC Stock<input id="master-own-quantity" name="ownQuantity" type="number" min="0" step="1" required></label>
+            <label>Consignment Stock<input id="master-consignment-quantity" name="consignmentQuantity" type="number" min="0" step="1" required></label>
+            <label>Reorder Level<input id="master-reorder-level" name="reorderLevel" type="number" min="0" step="1" required></label>
+            <fieldset class="condition-checkbox-group">
+              Condition
+              <label><input name="stockCondition" type="checkbox" value="new"> New</label>
+              <label><input name="stockCondition" type="checkbox" value="used"> Used</label>
+              <label><input name="stockCondition" type="checkbox" value="internal"> Internal</label>
+            </fieldset>
+          </div>
+        </section>
+
+        <section class="panel form-panel stock-workflow-step-panel">
+          <div class="panel-header panel-header-tight stock-workflow-step-header">
+            <span class="stock-workflow-step-number">3</span>
+            <div>
+              <h3>Reason</h3>
+              <p class="section-copy">This reason is stored in the private Master audit log.</p>
+            </div>
+          </div>
+          <label>
+            Correction reason
+            <textarea id="master-reason" name="reason" rows="3" placeholder="Example: physical stock count correction / imported item cleanup" required></textarea>
+          </label>
+        </section>
+
+        <div class="form-actions stock-workflow-submit-row">
+          <button type="submit" class="button-primary">Save Master Correction</button>
+          <span class="form-hint">Only Master users can view the private audit record for this correction.</span>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <script src="app.js?v=20260603-multi-condition" defer></script>
+</body>
+</html>

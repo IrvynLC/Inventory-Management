@@ -7,7 +7,7 @@ const API_LOGOUT_ENDPOINT = "/api/logout";
 const API_SESSION_ENDPOINT = "/api/session";
 const API_USERS_ENDPOINT = "/api/users";
 const API_TIMEOUT_MS = 4000;
-const PROTECTED_PAGES = new Set(["home", "inventory", "activity-history", "activity-detail", "add-stock", "draw-stock", "create-stock", "relocate-stock", "handover", "manage-users"]);
+const PROTECTED_PAGES = new Set(["home", "inventory", "activity-history", "activity-detail", "add-stock", "draw-stock", "create-stock", "relocate-stock", "handover", "manage-users", "master-control"]);
 
 let currentUserCache = null;
 let sessionLoadPromise = null;
@@ -82,13 +82,29 @@ function normalizeRole(role) {
   return value;
 }
 
+function isMasterUser(user = getCurrentUser()) {
+  return normalizeRole(user?.role) === "master";
+}
+
+function canViewPrivateAudit(user = getCurrentUser()) {
+  return isMasterUser(user);
+}
+
+function isPrivateAuditRecord(record) {
+  return Boolean(record?.isPrivate || record?.privateAudit || record?.privateToMaster);
+}
+
 function canAccessPage(page, user) {
   if (!PROTECTED_PAGES.has(page)) return true;
   if (!user) return false;
 
   const role = normalizeRole(user.role);
+  if (role === "master") return true;
   if (["home", "inventory", "activity-history", "activity-detail", "handover"].includes(page)) {
     return true;
+  }
+  if (page === "master-control") {
+    return false;
   }
   if (page === "relocate-stock") {
     return role === "admin";
@@ -107,6 +123,9 @@ function canAccessPage(page, user) {
 }
 
 function getCorrectionPermissionLabel(correctionKind) {
+  if (correctionKind === "create") return "Master, Admin, or Administrative";
+  if (correctionKind === "stock-in") return "Master, Admin, or Administrative";
+  if (correctionKind === "stock-out") return "Master, Engineer, or Administrative";
   if (["create", "stock-in"].includes(correctionKind)) {
     return "Admin or Administrative";
   }
@@ -120,6 +139,7 @@ function canCorrectActivityKind(correctionKind, user) {
   if (!user) return false;
 
   const role = normalizeRole(user.role);
+  if (role === "master") return true;
   if (role === "administrative") return true;
   if (["create", "stock-in"].includes(correctionKind)) return role === "admin";
   if (correctionKind === "stock-out") return role === "engineer";
@@ -141,6 +161,7 @@ function canAccessHref(href, user) {
     "activity-detail.html": "activity-detail",
     "handover.html": "handover",
     "manage-users.html": "manage-users",
+    "master-control.html": "master-control",
     "add-stock.html": "add-stock",
     "create-stock.html": "create-stock",
     "relocate-stock.html": "relocate-stock",
@@ -208,19 +229,94 @@ function getDefaultConsignmentQuantity() {
 }
 
 function normalizeStockCondition(value) {
-  const condition = String(value ?? "").trim().toLowerCase();
-  if (["used", "use", "yes", "y", "true", "1"].includes(condition)) return "used";
+  const conditions = normalizeStockConditions(value);
+  if (conditions.includes("internal")) return "internal";
+  if (conditions.includes("used")) return "used";
   return "new";
 }
 
+function normalizeStockConditions(value) {
+  const rawValues = Array.isArray(value)
+    ? value
+    : String(value ?? "")
+        .split(/[,\n|/]+/)
+        .flatMap((entry) => String(entry).trim().split(/\s+/));
+  const aliases = new Map([
+    ["new", "new"],
+    ["used", "used"],
+    ["use", "used"],
+    ["yes", "used"],
+    ["y", "used"],
+    ["true", "used"],
+    ["1", "used"],
+    ["internal", "internal"],
+    ["inside", "internal"],
+    ["in-house", "internal"]
+  ]);
+  const conditions = [];
+  rawValues.forEach((entry) => {
+    const normalized = aliases.get(String(entry ?? "").trim().toLowerCase());
+    if (normalized && !conditions.includes(normalized)) conditions.push(normalized);
+  });
+  if (conditions.includes("new") && conditions.includes("used")) {
+    conditions.splice(conditions.indexOf("new"), 1);
+  }
+  return conditions.length ? conditions : ["new"];
+}
+
+function serializeStockConditions(value) {
+  return normalizeStockConditions(value).join(",");
+}
+
+function getCheckedFormValues(form, name) {
+  return Array.from(form.querySelectorAll(`input[name="${name}"]:checked`)).map((input) => input.value);
+}
+
+function setCheckedFormValues(form, name, values) {
+  const conditions = normalizeStockConditions(values);
+  form.querySelectorAll(`input[name="${name}"]`).forEach((input) => {
+    input.checked = conditions.includes(input.value);
+  });
+}
+
+function bindConditionCheckboxGroups(root = document) {
+  root.querySelectorAll(".condition-checkbox-group").forEach((group) => {
+    if (group.dataset.conditionBound) return;
+    group.addEventListener("change", (event) => {
+      const input = event.target.closest('input[type="checkbox"][name="stockCondition"]');
+      if (!input) return;
+      if (input.checked && input.value === "new") {
+        const usedInput = group.querySelector('input[value="used"]');
+        if (usedInput) usedInput.checked = false;
+      }
+      if (input.checked && input.value === "used") {
+        const newInput = group.querySelector('input[value="new"]');
+        if (newInput) newInput.checked = false;
+      }
+      const checked = group.querySelectorAll('input[type="checkbox"][name="stockCondition"]:checked');
+      if (!checked.length) {
+        const newInput = group.querySelector('input[value="new"]');
+        if (newInput) newInput.checked = true;
+      }
+    });
+    group.dataset.conditionBound = "true";
+  });
+}
+
 function formatStockConditionLabel(value) {
-  return normalizeStockCondition(value) === "used" ? "Used" : "New Stock";
+  const labels = {
+    new: "New",
+    used: "Used",
+    internal: "Internal"
+  };
+  return normalizeStockConditions(value).map((condition) => labels[condition] ?? "New").join(" / ");
 }
 
 function renderStockConditionBadge(value) {
-  const condition = normalizeStockCondition(value);
-  if (condition !== "used") return "";
-  return `<span class="stock-condition-badge stock-condition-badge-${condition}">${escapeHtml(formatStockConditionLabel(condition))}</span>`;
+  return normalizeStockConditions(value)
+    .filter((condition) => condition !== "new")
+    .map((condition) => `<span class="stock-condition-badge stock-condition-badge-${condition}">${escapeHtml(formatStockConditionLabel(condition))}</span>`)
+    .join("");
 }
 
 function normalizeInternalFlag(value) {
@@ -627,6 +723,7 @@ function normalizeCorrectionRecord(entry) {
     ...entry,
     actorName: entry.actorName ?? entry.createdByName ?? entry.createdBy?.name ?? "Unknown User",
     actorUserId: entry.actorUserId ?? entry.createdByUserId ?? entry.createdBy?.userId ?? null,
+    isPrivate: isPrivateAuditRecord(entry),
     itemRows: entry.itemRows ?? []
   };
 }
@@ -924,7 +1021,6 @@ async function downloadInventoryExcel(items) {
     { key: "spacer1", width: 1.18 },
     { key: "lcStock", width: 9.18 },
     { key: "spacer2", width: 1.27 },
-    { key: "balanceStock", width: 9.27 },
     { key: "location", width: 11.63 },
     { key: "autoCount", width: 6.82, hidden: true }
   ];
@@ -942,6 +1038,22 @@ async function downloadInventoryExcel(items) {
     blue: "FF0070C0",
     border: "FF000000"
   };
+  const brandFillColors = new Map(Object.entries({
+    ACTEL: "FFFFFFCC",
+    ALANTEK: "FFBFBFBF",
+    AMP: "FFC680BE",
+    COMMSCOPE: "FF66FF33",
+    DATWYLER: "FFFFC9FF",
+    DRAKA: "FF305496",
+    HONEYWELL: "FFFFB9FF",
+    INFINITE: "FFFFFF00",
+    NEXANS: "FFFFC000",
+    OEM: "FFFF0000",
+    PANDUIT: "FFFFB9FF",
+    SIEMON: "FFC6E0B4",
+    VELOC: "FF00B0F0"
+  }));
+  const getBrandFillColor = (brand) => brandFillColors.get(String(brand ?? "").trim().toUpperCase()) || null;
   const thinBorder = {
     top: { style: "thin", color: { argb: colors.border } },
     left: { style: "thin", color: { argb: colors.border } },
@@ -956,19 +1068,25 @@ async function downloadInventoryExcel(items) {
     cell.border = thinBorder;
     if (fill) cell.fill = makeFill(fill);
   };
-
-  worksheet.mergeCells("A1:J1");
-  const titleCell = worksheet.getCell("A1");
-  titleCell.value = "Product of Materials - Actel/ Alantek/ AMP/ Commscope/ Datwyler/ Honeywell/ Infinite/ Nexans/ OEM/ Panduit/ Systimax";
-  titleCell.font = { name: "Arial", size: 15, color: { argb: colors.white } };
-  titleCell.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
-  titleCell.fill = makeFill(colors.black);
-  titleCell.border = thinBorder;
-  worksheet.getRow(1).height = 35.5;
-  worksheet.getRow(2).height = 8;
-
-  const headerRow = worksheet.getRow(3);
-  headerRow.height = 28.5;
+  const buildDescriptionRichText = (description) => {
+    const text = String(description ?? "");
+    const highlightPattern = /\b(?:cat6a?|white|green|blue|grey|gray|black|red|yellow|orange|aqua|purple|violet|pink|brown|beige|ivory|silver|gold|transparent|clear|natural|[1-9]\d*(?:\.\d+)?m|multi[\s-]?mode|single[\s-]?mode|sm|mm)\b/gi;
+    const parts = [];
+    let lastIndex = 0;
+    text.replace(highlightPattern, (match, offset) => {
+      if (offset > lastIndex) {
+        parts.push({ text: text.slice(lastIndex, offset), font: { name: "Calibri", size: 12, color: { argb: colors.black } } });
+      }
+      parts.push({ text: match, font: { name: "Calibri", size: 12, bold: true, color: { argb: colors.red } } });
+      lastIndex = offset + match.length;
+      return match;
+    });
+    if (lastIndex < text.length) {
+      parts.push({ text: text.slice(lastIndex), font: { name: "Calibri", size: 12, color: { argb: colors.black } } });
+    }
+    return parts.length ? { richText: parts } : text;
+  };
+  const exportTitle = "Product of Materials - Actel/ Alantek/ AMP/ Commscope/ Datwyler/ Honeywell/ Infinite/ Nexans/ OEM/ Panduit/ Siemon/ Veloc";
   const headers = {
     A: "BRAND",
     B: "Model",
@@ -977,76 +1095,157 @@ async function downloadInventoryExcel(items) {
     E: "UOM",
     F: "Consgt",
     H: "LC      Stock",
-    J: "Balance      Stock",
-    K: "LOCATION",
-    L: "Auto Count"
+    J: "LOCATION",
+    K: "Auto Count"
   };
-  Object.entries(headers).forEach(([column, label]) => {
-    const cell = worksheet.getCell(`${column}3`);
-    cell.value = label;
-    cell.font = { name: column === "H" || column === "J" ? "Arial" : "Calibri", size: 11, color: { argb: column === "F" || column === "H" || column === "J" ? colors.black : colors.white } };
-    cell.alignment = baseAlignment;
-    cell.border = thinBorder;
-    if (["A", "B", "C", "D", "K", "L"].includes(column)) cell.fill = makeFill(colors.black);
-    if (column === "F") cell.fill = makeFill(colors.pink);
-    if (column === "H") cell.fill = makeFill(colors.yellow);
-    if (column === "J") cell.fill = makeFill(colors.green);
-  });
-  ["G3", "I3"].forEach((address) => {
-    const cell = worksheet.getCell(address);
-    cell.border = thinBorder;
-    cell.fill = makeFill(colors.black);
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+  const sortExportItems = (sectionItems) => [...sectionItems].sort((a, b) => {
+    const modelCompare = collator.compare(String(a.model ?? "Standard"), String(b.model ?? "Standard"));
+    if (modelCompare) return modelCompare;
+    const brandCompare = collator.compare(String(a.brand ?? "Generic"), String(b.brand ?? "Generic"));
+    if (brandCompare) return brandCompare;
+    return collator.compare(String(a.name ?? ""), String(b.name ?? ""));
   });
 
-  items.forEach((item, index) => {
-    const rowNumber = index + 4;
-    const row = worksheet.getRow(rowNumber);
-    row.height = 18;
-    const ownQuantity = Number(item.ownQuantity ?? item.quantity ?? 0);
-    const consignmentQuantity = Number(item.consignmentQuantity ?? 0);
-    const totalQuantity = Number(item.quantity ?? ownQuantity + consignmentQuantity);
-    const values = {
-      A: item.brand ?? "Generic",
-      B: item.model ?? "Standard",
-      C: item.name ?? "",
-      D: item.sku ?? "",
-      E: formatUnitDisplay(item.unit),
-      F: consignmentQuantity || "",
-      G: "",
-      H: ownQuantity || "",
-      I: "",
-      J: totalQuantity,
-      K: item.location ?? "Main Store",
-      L: totalQuantity
-    };
-    Object.entries(values).forEach(([column, value]) => {
+  const writeTitleRow = (rowNumber, suffix = "", suffixColor = colors.black, titleText = exportTitle) => {
+    worksheet.mergeCells(`A${rowNumber}:J${rowNumber}`);
+    const titleCell = worksheet.getCell(`A${rowNumber}`);
+    titleCell.value = suffix
+      ? {
+          richText: [
+            { text: `${titleText} `, font: { name: "Arial", size: 15, bold: true, underline: true, color: { argb: colors.black } } },
+            { text: suffix, font: { name: "Arial", size: 15, bold: true, underline: true, color: { argb: suffixColor } } }
+          ]
+        }
+      : titleText;
+    titleCell.font = { name: "Arial", size: 15, bold: true, underline: true, color: { argb: colors.black } };
+    titleCell.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
+    titleCell.border = thinBorder;
+    worksheet.getRow(rowNumber).height = 35.5;
+  };
+
+  const writeHeaderRow = (rowNumber) => {
+    const headerRow = worksheet.getRow(rowNumber);
+    headerRow.height = 28.5;
+    Object.entries(headers).forEach(([column, label]) => {
       const cell = worksheet.getCell(`${column}${rowNumber}`);
-      cell.value = value;
-      const fill = column === "A"
-        ? colors.yellow
-        : column === "D"
-          ? colors.cyan
-          : column === "F"
-            ? colors.pink
-            : column === "H"
-              ? colors.lightYellow
-              : column === "J"
-                ? colors.green
-                : column === "C" || column === "E"
-                  ? colors.white
-                  : null;
-      const alignment = column === "C"
-        ? { vertical: "middle", horizontal: "left", wrapText: true }
-        : baseAlignment;
-      applyCellStyle(cell, fill, alignment);
+      cell.value = label;
+      cell.font = { name: column === "H" ? "Arial" : "Calibri", size: 11, bold: true, underline: true, color: { argb: colors.black } };
+      cell.alignment = baseAlignment;
+      cell.border = thinBorder;
+      if (column === "F") cell.fill = makeFill(colors.pink);
+      if (column === "H") cell.fill = makeFill(colors.yellow);
     });
-  });
-
-  const finalRowNumber = Math.max(items.length + 4, 5);
-  worksheet.autoFilter = {
-    from: "A3",
-    to: "K3"
+    ["G", "I"].forEach((column) => {
+      const cell = worksheet.getCell(`${column}${rowNumber}`);
+      cell.border = thinBorder;
+    });
   };
+
+  const writeItemRows = (sectionItems, startRowNumber) => {
+    let rowNumber = startRowNumber;
+    let previousModel = "";
+    sortExportItems(sectionItems).forEach((item, index) => {
+      const model = String(item.model ?? "Standard");
+      if (index > 0 && collator.compare(previousModel, model) !== 0) {
+        worksheet.getRow(rowNumber).height = 8;
+        rowNumber += 1;
+      }
+      const row = worksheet.getRow(rowNumber);
+      row.height = 18;
+      previousModel = model;
+      const ownQuantity = Number(item.ownQuantity ?? item.quantity ?? 0);
+      const consignmentQuantity = Number(item.consignmentQuantity ?? 0);
+      const totalQuantity = Number(item.quantity ?? ownQuantity + consignmentQuantity);
+      const values = {
+        A: item.brand ?? "Generic",
+        B: item.model ?? "Standard",
+        C: item.name ?? "",
+        D: item.sku ?? "",
+        E: formatUnitDisplay(item.unit),
+        F: consignmentQuantity || "",
+        G: "",
+        H: ownQuantity,
+        I: "",
+        J: item.location ?? "Main Store",
+        K: totalQuantity
+      };
+      Object.entries(values).forEach(([column, value]) => {
+        const cell = worksheet.getCell(`${column}${rowNumber}`);
+        cell.value = value;
+        const fill = column === "A"
+          ? getBrandFillColor(value)
+          : column === "D"
+            ? colors.cyan
+            : column === "F"
+              ? colors.pink
+              : column === "H"
+                ? colors.lightYellow
+                : column === "C" || column === "E"
+                    ? colors.white
+                    : null;
+        const alignment = column === "C"
+          ? { vertical: "middle", horizontal: "left", wrapText: true }
+          : baseAlignment;
+        applyCellStyle(cell, fill, alignment);
+        if (column === "C") cell.value = buildDescriptionRichText(value);
+      });
+      rowNumber += 1;
+    });
+    return rowNumber;
+  };
+
+  const getConditionText = (value) => Array.isArray(value)
+    ? value.map((entry) => getConditionText(entry)).join(" ")
+    : String(value ?? "").trim().toLowerCase();
+  const getItemCondition = (item) => {
+    const conditionText = [
+      item.stockCondition,
+      item.condition
+    ].map((value) => getConditionText(value)).join(" ");
+    if (/\binternal\b/.test(conditionText)) return "internal";
+    if (/\bused\b/.test(conditionText)) return "used";
+    return normalizeStockCondition(item.stockCondition ?? item.condition ?? item.isUsedStock);
+  };
+  const newItems = items.filter((item) => getItemCondition(item) === "new");
+  const usedItems = items.filter((item) => getItemCondition(item) === "used");
+  const internalItems = items.filter((item) => getItemCondition(item) === "internal");
+
+  let rowNumber = 1;
+  writeTitleRow(rowNumber);
+  rowNumber += 1;
+  worksheet.getRow(rowNumber).height = 8;
+  rowNumber += 1;
+  writeHeaderRow(rowNumber);
+  worksheet.autoFilter = {
+    from: `A${rowNumber}`,
+    to: `J${rowNumber}`
+  };
+  rowNumber = writeItemRows(newItems, rowNumber + 1);
+
+  if (usedItems.length) {
+    worksheet.getRow(rowNumber).height = 14;
+    rowNumber += 1;
+    writeTitleRow(rowNumber, "(Used)", colors.red);
+    rowNumber += 1;
+    worksheet.getRow(rowNumber).height = 8;
+    rowNumber += 1;
+    writeHeaderRow(rowNumber);
+    rowNumber = writeItemRows(usedItems, rowNumber + 1);
+  }
+
+  if (internalItems.length) {
+    worksheet.getRow(rowNumber).height = 14;
+    rowNumber += 1;
+    writeTitleRow(rowNumber, "(Internal)", colors.black, "Product of Materials - Veloc");
+    rowNumber += 1;
+    worksheet.getRow(rowNumber).height = 8;
+    rowNumber += 1;
+    writeHeaderRow(rowNumber);
+    rowNumber = writeItemRows(internalItems, rowNumber + 1);
+  }
+
+  const finalRowNumber = Math.max(rowNumber, 5);
   worksheet.pageSetup = {
     orientation: "landscape",
     fitToPage: true,
@@ -1316,8 +1515,8 @@ function showCreateStockConfirmationDialog(item) {
       <div class="confirm-dialog create-stock-confirm-dialog">
         <div class="confirm-dialog-header">
           <div>
-            <p class="eyebrow">Review New Stock</p>
-            <h3 id="create-stock-confirm-title">Confirm new inventory item</h3>
+            <p class="eyebrow">Review Stock Record</p>
+            <h3 id="create-stock-confirm-title">Confirm inventory item</h3>
             <p class="section-copy">Check the master item details before creating the stock record.</p>
           </div>
         </div>
@@ -2334,7 +2533,8 @@ function standardizeInventorySidebar() {
     "relocate-stock",
     "activity-history",
     "activity-detail",
-    "manage-users"
+    "manage-users",
+    "master-control"
   ]);
   if (!sidebarPages.has(page)) return;
   const sidebar = document.querySelector(".sidebar");
@@ -2351,7 +2551,8 @@ function standardizeInventorySidebar() {
     ["draw-stock.html", "OUT", "Draw Stocks", "Process stock-out transactions"],
     ["relocate-stock.html", "MOV", "Relocate Stock", "Move items between storage locations"],
     ["activity-history.html", "LOG", "Activity History", "Review transaction audit records"],
-    ["manage-users.html", "USR", "Create User", "Add user accounts and roles"]
+    ["manage-users.html", "USR", "Create User", "Add user accounts and roles"],
+    ["master-control.html", "MS", "Master Control", "Private item and balance corrections"]
   ];
 
   sidebar.innerHTML = `
@@ -2395,12 +2596,9 @@ function initAuthChrome(currentUser) {
       return;
     }
 
-    if (["add-stock", "create-stock", "draw-stock", "relocate-stock", "activity-history", "manage-users"].includes(document.body.dataset.page)) {
+    if (["add-stock", "create-stock", "draw-stock", "relocate-stock", "activity-history", "manage-users", "master-control"].includes(document.body.dataset.page)) {
       topbarActions.querySelector("#inventory-export-button")?.remove();
       topbarActions.querySelector(".inventory-menu-button")?.remove();
-      if (document.body.dataset.page !== "add-stock") {
-        topbarActions.querySelector('a[href="create-stock.html"]')?.remove();
-      }
 
       if (!topbarActions.querySelector('a[href="index.html"]')) {
         const backHomeLink = document.createElement("a");
@@ -2934,8 +3132,14 @@ function getStockPickerSearchText(item) {
     item.sku,
     item.brand,
     item.model,
-    item.location
+    item.location,
+    formatStockConditionLabel(item.stockCondition)
   ].map((value) => String(value ?? "").toLowerCase()).join(" ");
+}
+
+function getStockPickerDisplayName(item) {
+  const name = String(item?.name ?? "");
+  return normalizeStockConditions(item?.stockCondition).includes("used") ? `${name} - Used` : name;
 }
 
 function renderStockPickerList(container, inventory, selectedId, searchTerm = "", options = {}) {
@@ -2974,7 +3178,7 @@ function renderStockPickerList(container, inventory, selectedId, searchTerm = ""
       ${groupMarkup}
       <button type="button" class="stock-picker-option${item.id === selectedId ? " is-selected" : ""}" data-stock-picker-option="${item.id}" role="option" aria-selected="${item.id === selectedId ? "true" : "false"}">
         <span class="stock-picker-option-main">
-          <strong>${escapeHtml(item.name)}</strong>
+          <strong>${escapeHtml(getStockPickerDisplayName(item))}</strong>
           <span>${escapeHtml(item.brand ?? "Generic")} / ${escapeHtml(item.sku ?? "-")} / ${escapeHtml(item.location ?? "Main Store")}</span>
         </span>
         <span class="stock-picker-option-metrics">
@@ -2994,7 +3198,7 @@ function updateStockPickerButton(button, item, options = {}) {
   button.dataset.hasSelection = String(Boolean(item));
   button.innerHTML = item
     ? `
-      <span class="stock-picker-button-title">${escapeHtml(item.name)}</span>
+      <span class="stock-picker-button-title">${escapeHtml(getStockPickerDisplayName(item))}</span>
       <span class="stock-picker-button-meta">${escapeHtml(item.sku ?? "-")} | ${Number(item.quantity ?? 0)} ${escapeHtml(formatUnitDisplay(item.unit))} ${escapeHtml(quantityLabel)}</span>
     `
     : `
@@ -3134,7 +3338,7 @@ function getActivityEvents(data) {
     id: `create-${item.id}`,
     type: "create",
     sourceId: item.id,
-    title: "New Stock Created",
+    title: `${formatStockConditionLabel(item.stockCondition)} Stock Created`,
     actor: item.createdByName ?? "Unknown User",
     itemSummary: item.name ?? item.sku ?? "Inventory item",
     itemLines: [item.name ?? item.sku ?? "Inventory item"],
@@ -3239,7 +3443,9 @@ function getActivityEvents(data) {
     };
   });
 
-  const corrections = (data.corrections ?? []).map((entry) => {
+  const corrections = (data.corrections ?? [])
+    .filter((entry) => !isPrivateAuditRecord(entry) || canViewPrivateAudit())
+    .map((entry) => {
     const itemLines = (entry.itemRows ?? []).map((row) => row.name ?? row.sku ?? "Item");
     const sourceKind = getCorrectionSourceKind(entry) ?? entry.sourceType;
     const isCreateCorrection = sourceKind === "create";
@@ -3248,7 +3454,7 @@ function getActivityEvents(data) {
       id: `correction-${entry.id}`,
       type: "correction",
       sourceId: entry.id,
-      title: isCreateCorrection ? "Stock Creation Correction" : sourceKind === "stock-out" ? "Stock-Out Correction" : "Stock-In Correction",
+      title: `${isPrivateAuditRecord(entry) ? "Master " : ""}${isCreateCorrection ? "Stock Creation Correction" : sourceKind === "stock-out" ? "Stock-Out Correction" : "Stock-In Correction"}`,
       actor: entry.actorName ?? "Unknown User",
       itemSummary: itemLines.join(", "),
       itemLines,
@@ -3271,6 +3477,7 @@ function getActivityEvents(data) {
 
 function getCorrectionChildren(data, sourceType, sourceId) {
   return (data.corrections ?? [])
+    .filter((entry) => !isPrivateAuditRecord(entry) || canViewPrivateAudit())
     .filter((entry) => entry.sourceType === sourceType && entry.sourceId === sourceId)
     .sort((a, b) => new Date(a.createdAt ?? 0) - new Date(b.createdAt ?? 0));
 }
@@ -3342,6 +3549,7 @@ function getOriginalAuditRecord(data, sourceType, sourceId) {
   if (!sourceType || !sourceId) return null;
   if (sourceType === "correction") {
     const correction = (data.corrections ?? []).find((entry) => entry.id === sourceId);
+    if (isPrivateAuditRecord(correction) && !canViewPrivateAudit()) return null;
     const root = getRootCorrectionSource(data, correction);
     return getOriginalAuditRecord(data, root.type, root.id);
   }
@@ -3583,6 +3791,7 @@ function getActivityDetailRecord(type, id, data) {
   if (type === "correction") {
     const correction = (data.corrections ?? []).find((entry) => entry.id === id);
     if (!correction) return null;
+    if (isPrivateAuditRecord(correction) && !canViewPrivateAudit()) return null;
     const latestCorrection = getLatestCorrection(data, "correction", id);
     const rootSource = getRootCorrectionSource(data, correction);
     const sourceKind = getCorrectionSourceKind(correction) ?? rootSource.type ?? correction.sourceType;
@@ -3613,7 +3822,7 @@ function getActivityDetailRecord(type, id, data) {
       sourceType: correction.sourceType,
       rootSourceType: rootSource.type,
       rootSourceId: rootSource.id,
-      title: isCreateCorrection ? "Stock Creation Correction Record" : sourceKind === "stock-out" ? "Stock-Out Correction Record" : "Stock-In Correction Record",
+      title: `${isPrivateAuditRecord(correction) ? "Master " : ""}${isCreateCorrection ? "Stock Creation Correction Record" : sourceKind === "stock-out" ? "Stock-Out Correction Record" : "Stock-In Correction Record"}`,
       actor: correction.actorName ?? "Unknown User",
       createdAt: correction.createdAt,
       summary: `Correction for ${isCreateCorrection ? "stock creation" : sourceKind === "stock-out" ? "stock-out" : "stock-in"} record`,
@@ -3995,7 +4204,13 @@ async function applyActivityCorrection(type, id, form) {
   }
 
   try {
-    const result = await sendBackendAction("correct-activity", { type, id, reason, rows });
+    const result = await sendBackendAction("correct-activity", {
+      type,
+      id,
+      reason,
+      rows,
+      privateAudit: isMasterUser(currentUser)
+    });
     return { ok: true, correctionId: result.correction?.id };
   } catch (error) {
     return { ok: false, message: error.message || "The correction could not be saved to the backend." };
@@ -4190,7 +4405,7 @@ function renderInventoryPage() {
   const activeBrand = getValidFilterValue(brandFilter?.value, localStorage.getItem(brandKey), brands);
   const activeCategory = getValidFilterValue(modelFilter?.value, localStorage.getItem(modelKey), models);
   const rawConditionFilter = localStorage.getItem(conditionKey) ?? conditionFilter?.value ?? "all";
-  const activeCondition = ["all", "new", "used"].includes(rawConditionFilter) ? rawConditionFilter : "all";
+  const activeCondition = ["all", "new", "used", "internal"].includes(rawConditionFilter) ? rawConditionFilter : "all";
   const rawStatusFilter = localStorage.getItem(statusKey) ?? "all";
   const activeStatus = ["all", "low", "out"].includes(rawStatusFilter) ? rawStatusFilter : "all";
   const selectedPageSize = Number(localStorage.getItem(pageSizeKey) ?? pageSizeSelect?.value ?? String(INVENTORY_PAGE_SIZE));
@@ -4260,7 +4475,7 @@ function renderInventoryPage() {
     if (!matchesSearch) return false;
     if (activeBrand !== "all" && item.brand !== activeBrand) return false;
     if (activeCategory !== "all" && item.model !== activeCategory) return false;
-    if (activeCondition !== "all" && normalizeStockCondition(item.stockCondition) !== activeCondition) return false;
+    if (activeCondition !== "all" && !normalizeStockConditions(item.stockCondition).includes(activeCondition)) return false;
     if (activeStatus !== "all" && getInventoryStatus(item).key !== activeStatus) return false;
     return true;
   });
@@ -4786,7 +5001,7 @@ function initCreateStockPage() {
         quantity,
         ownQuantity,
         consignmentQuantity,
-        stockCondition: normalizeStockCondition(form.get("stockCondition")),
+        stockCondition: serializeStockConditions(form.getAll("stockCondition")),
         location: String(form.get("location") ?? "").trim()
       };
 
@@ -4813,6 +5028,12 @@ function initManageUsersPage() {
   const content = document.querySelector(".main-shell");
   const form = document.querySelector("#create-user-form");
   if (!content || !form || form.dataset.bound) return;
+  const roleSelect = form.elements.role;
+  if (roleSelect && !isMasterUser()) {
+    Array.from(roleSelect.options).forEach((option) => {
+      if (normalizeRole(option.value) === "master") option.remove();
+    });
+  }
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -4845,6 +5066,196 @@ function initManageUsersPage() {
       submitButton.textContent = "Create User";
     }
   });
+  form.dataset.bound = "true";
+}
+
+function initMasterControlPage() {
+  const content = document.querySelector(".main-shell");
+  const form = document.querySelector("#master-control-form");
+  const itemSelect = document.querySelector("#master-item");
+  const stockPicker = document.querySelector("[data-master-stock-picker]");
+  const stockPickerButton = document.querySelector("#master-stock-picker-button");
+  const stockPickerPopover = document.querySelector("#master-stock-picker-popover");
+  const stockPickerSearch = document.querySelector("#master-stock-picker-search");
+  const stockPickerList = document.querySelector("#master-stock-picker-list");
+  if (!content || !form || !itemSelect) return;
+
+  const fields = {
+    brand: form.elements.brand,
+    model: form.elements.model,
+    name: form.elements.name,
+    sku: form.elements.sku,
+    unit: form.elements.unit,
+    location: form.elements.location,
+    ownQuantity: form.elements.ownQuantity,
+    consignmentQuantity: form.elements.consignmentQuantity,
+    reorderLevel: form.elements.reorderLevel,
+    stockCondition: form.elements.stockCondition,
+    reason: form.elements.reason
+  };
+
+  const getSelectedItem = () => loadData().inventory.find((item) => item.id === itemSelect.value) ?? null;
+
+  const renderOptions = (selectedId = "") => {
+    const inventory = loadData().inventory
+      .slice()
+      .sort((a, b) => String(a.model ?? "").localeCompare(String(b.model ?? "")) || String(a.name ?? "").localeCompare(String(b.name ?? "")));
+    itemSelect.innerHTML = [
+      `<option value="" disabled ${selectedId ? "" : "selected"}>Select an item</option>`,
+      ...inventory.map((item) => `
+        <option value="${escapeHtml(item.id)}" ${item.id === selectedId ? "selected" : ""}>
+          ${escapeHtml(getStockPickerDisplayName(item))} | ${escapeHtml(item.sku ?? "-")}
+        </option>
+      `)
+    ].join("");
+    if (selectedId) itemSelect.value = selectedId;
+  };
+
+  const fillForm = (item) => {
+    const disabled = !item;
+    Object.entries(fields).forEach(([key, field]) => {
+      if (!field || key === "reason") return;
+      if (key === "stockCondition") {
+        form.querySelectorAll('input[name="stockCondition"]').forEach((input) => {
+          input.disabled = disabled;
+        });
+        return;
+      }
+      field.disabled = disabled;
+    });
+    if (!item) {
+      Object.entries(fields).forEach(([key, field]) => {
+        if (key === "stockCondition") {
+          setCheckedFormValues(form, "stockCondition", ["new"]);
+          return;
+        }
+        if (field && key !== "reason") field.value = "";
+      });
+      updateStockPickerButton(stockPickerButton, null, { placeholderMeta: "Search by description, SKU, brand, category, or condition" });
+      return;
+    }
+    fields.brand.value = item.brand ?? "Generic";
+    fields.model.value = item.model ?? "Standard";
+    fields.name.value = item.name ?? "";
+    fields.sku.value = item.sku ?? "";
+    fields.unit.value = item.unit ?? "";
+    fields.location.value = item.location ?? "Main Store";
+    fields.ownQuantity.value = String(Number(item.ownQuantity ?? item.quantity ?? 0));
+    fields.consignmentQuantity.value = String(Number(item.consignmentQuantity ?? 0));
+    fields.reorderLevel.value = String(Number(item.reorderLevel ?? 0));
+    setCheckedFormValues(form, "stockCondition", item.stockCondition);
+    updateStockPickerButton(stockPickerButton, item, { quantityLabel: "current" });
+  };
+
+  const renderPicker = () => {
+    renderStockPickerList(stockPickerList, loadData().inventory, itemSelect.value, stockPickerSearch?.value ?? "", {
+      onlyInStock: false,
+      emptyMessage: "No inventory items match your search."
+    });
+  };
+
+  const selectItem = (item) => {
+    if (!item) return;
+    itemSelect.value = item.id;
+    fillForm(item);
+    renderPicker();
+  };
+
+  renderOptions();
+  fillForm(null);
+  renderPicker();
+
+  if (form.dataset.bound) return;
+
+  const setPickerOpen = (open) => {
+    if (!stockPickerPopover || !stockPickerButton) return;
+    stockPickerPopover.hidden = !open;
+    stockPickerButton.setAttribute("aria-expanded", String(open));
+    if (open) {
+      renderPicker();
+      requestAnimationFrame(() => stockPickerSearch?.focus());
+    }
+  };
+
+  stockPickerButton?.addEventListener("click", () => {
+    setPickerOpen(stockPickerPopover?.hidden ?? true);
+  });
+
+  stockPickerSearch?.addEventListener("input", renderPicker);
+
+  stockPickerList?.addEventListener("click", (event) => {
+    const option = event.target.closest("[data-stock-picker-option]");
+    if (!option) return;
+    const item = loadData().inventory.find((entry) => entry.id === option.dataset.stockPickerOption);
+    selectItem(item);
+    setPickerOpen(false);
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!stockPicker || stockPicker.contains(event.target)) return;
+    setPickerOpen(false);
+  });
+
+  stockPickerSearch?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      setPickerOpen(false);
+      stockPickerButton?.focus();
+    }
+  });
+
+  itemSelect.addEventListener("change", () => fillForm(getSelectedItem()));
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const item = getSelectedItem();
+    if (!item) {
+      showNotice(content, "Select an inventory item before saving.");
+      return;
+    }
+    const reason = String(fields.reason.value ?? "").trim().replace(/\s+/g, " ");
+    if (!reason) {
+      showNotice(content, "Enter a correction reason before saving.");
+      return;
+    }
+    const payload = {
+      itemId: item.id,
+      reason,
+      values: {
+        brand: String(fields.brand.value ?? "").trim().replace(/\s+/g, " "),
+        model: String(fields.model.value ?? "").trim().replace(/\s+/g, " "),
+        name: String(fields.name.value ?? "").trim().replace(/\s+/g, " "),
+        sku: String(fields.sku.value ?? "").trim().replace(/\s+/g, " "),
+        unit: String(fields.unit.value ?? "").trim().replace(/\s+/g, " ").toUpperCase(),
+        location: String(fields.location.value ?? "").trim().replace(/\s+/g, " "),
+        ownQuantity: Math.max(Number(fields.ownQuantity.value ?? 0), 0),
+        consignmentQuantity: Math.max(Number(fields.consignmentQuantity.value ?? 0), 0),
+        reorderLevel: Math.max(Number(fields.reorderLevel.value ?? 0), 0),
+        stockCondition: serializeStockConditions(getCheckedFormValues(form, "stockCondition"))
+      }
+    };
+    if (Object.entries(payload.values).some(([key, value]) => !["ownQuantity", "consignmentQuantity", "reorderLevel"].includes(key) && !String(value ?? "").trim())) {
+      showNotice(content, "Complete all item details before saving.");
+      return;
+    }
+
+    const submitButton = form.querySelector("button[type='submit']");
+    submitButton.disabled = true;
+    submitButton.textContent = "Saving...";
+    try {
+      await sendBackendAction("master-update-item", payload);
+      await initializeBackendData();
+      renderOptions(item.id);
+      fillForm(getSelectedItem());
+      fields.reason.value = "";
+      showToast("Master correction saved with private audit record.", "success");
+    } catch (error) {
+      showNotice(content, error.message || "The Master correction could not be saved.");
+    } finally {
+      submitButton.disabled = false;
+      submitButton.textContent = "Save Master Correction";
+    }
+  });
+
   form.dataset.bound = "true";
 }
 
@@ -5841,13 +6252,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (currentUser) {
     await initializeBackendData();
   }
-  if (["inventory", "activity-history", "activity-detail", "add-stock", "create-stock", "draw-stock", "relocate-stock", "manage-users"].includes(document.body.dataset.page)) {
+  if (["inventory", "activity-history", "activity-detail", "add-stock", "create-stock", "draw-stock", "relocate-stock", "manage-users", "master-control"].includes(document.body.dataset.page)) {
     initSidebar();
   }
   initSectionNavigation();
   const modalController = initModals();
   initCollapsibles();
   initCustomSelectDismissal();
+  bindConditionCheckboxGroups();
   if (document.body.dataset.page === "inventory") {
     renderInventoryPage();
   }
@@ -5871,6 +6283,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
   if (document.body.dataset.page === "manage-users") {
     initManageUsersPage();
+  }
+  if (document.body.dataset.page === "master-control") {
+    initMasterControlPage();
   }
   if (document.body.dataset.page === "handover") {
     renderHandoverPage();

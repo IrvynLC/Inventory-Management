@@ -120,7 +120,6 @@
         <div class="topbar-actions">
           <button class="button-link button-link-ghost inventory-menu-button" type="button" data-sidebar-toggle>Menu</button>
           <a class="button-link" href="index.html">Back to Home</a>
-          <a class="button-link button-link-strong" href="create-stock.html">+ New Item</a>
           <button class="button-link button-link-strong" type="button" id="inventory-export-button">Export Excel</button>
         </div>
       </header>
@@ -156,8 +155,9 @@
                 <span class="filter-label">Condition</span>
                 <select id="inventory-condition-filter">
                   <option value="all">All conditions</option>
-                  <option value="new">New stock</option>
+                  <option value="new">New</option>
                   <option value="used">Used</option>
+                  <option value="internal">Internal</option>
                 </select>
               </label>
               <label class="filter-field filter-field-select">
@@ -210,6 +210,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js" defer></script>
-  <script src="app.js?v=20260506-clear-data" defer></script>
+  <script src="app.js?v=20260603-multi-condition" defer></script>
 </body>
 </html>

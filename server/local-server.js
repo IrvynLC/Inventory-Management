@@ -353,7 +353,8 @@ async function initializeDatabase() {
       reason TEXT NOT NULL,
       created_at TIMESTAMPTZ,
       actor_user_id TEXT,
-      actor_name TEXT
+      actor_name TEXT,
+      is_private BOOLEAN NOT NULL DEFAULT false
     );
 
     CREATE INDEX IF NOT EXISTS activity_corrections_source_idx ON activity_corrections (source_type, source_id);
@@ -406,10 +407,17 @@ async function initializeDatabase() {
 
     DO $$
     BEGIN
+      ALTER TABLE activity_corrections
+        ADD COLUMN IF NOT EXISTS is_private BOOLEAN NOT NULL DEFAULT false;
+
+      IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'inventory_items_stock_condition_check') THEN
+        ALTER TABLE inventory_items
+          DROP CONSTRAINT inventory_items_stock_condition_check;
+      END IF;
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'inventory_items_stock_condition_check') THEN
         ALTER TABLE inventory_items
           ADD CONSTRAINT inventory_items_stock_condition_check
-          CHECK (stock_condition IN ('new', 'used')) NOT VALID;
+          CHECK (stock_condition ~ '^(new|used|internal)(,(new|used|internal))*$') NOT VALID;
       END IF;
 
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'inventory_items_quantity_total_check') THEN
@@ -655,8 +663,13 @@ function normalizeRole(role) {
   return value;
 }
 
+function isMasterUser(user) {
+  return normalizeRole(user?.role) === "master";
+}
+
 function requireAnyRole(user, allowedRoles, message = "You do not have permission to perform this action.") {
   const role = normalizeRole(user?.role);
+  if (role === "master") return;
   if (!allowedRoles.includes(role)) {
     const error = new Error(message);
     error.statusCode = 403;
@@ -667,6 +680,7 @@ function requireAnyRole(user, allowedRoles, message = "You do not have permissio
 function normalizeCreatableUserRole(role) {
   const normalized = normalizeRole(role);
   const roles = {
+    master: "Master",
     admin: "Admin",
     engineer: "Engineer",
     administrative: "Administrative"
@@ -683,7 +697,7 @@ function validateNewUserPayload(payload) {
     throw new Error("Username must be 3-40 characters using letters, numbers, dots, underscores, or hyphens.");
   }
   if (!role) {
-    throw new Error("Choose a valid role: Admin, Engineer, or Administrative.");
+    throw new Error("Choose a valid role: Master, Admin, Engineer, or Administrative.");
   }
   if (!password) {
     throw new Error("Enter a password.");
@@ -693,8 +707,13 @@ function validateNewUserPayload(payload) {
 }
 
 async function createSystemUser(actor, payload) {
-  requireAnyRole(actor, ["administrative"], "Only Administrative users can create new users.");
+  requireAnyRole(actor, ["administrative"], "Only Master or Administrative users can create new users.");
   const user = validateNewUserPayload(payload);
+  if (normalizeRole(user.role) === "master" && !isMasterUser(actor)) {
+    const error = new Error("Only Master users can create Master accounts.");
+    error.statusCode = 403;
+    throw error;
+  }
   const id = `user-${user.username}-${crypto.randomUUID().slice(0, 8)}`;
 
   try {
@@ -879,7 +898,8 @@ async function loadStateFromRelational(client = pool) {
       itemRows: correctionItemsByRecord.get(row.id) ?? [],
       createdAt: toIsoValue(row.created_at),
       actorUserId: row.actor_user_id,
-      actorName: row.actor_name
+      actorName: row.actor_name,
+      isPrivate: Boolean(row.is_private)
     })),
     relocations: relocationResult.rows.map((row) => compactObject({
       id: row.id,
@@ -1068,9 +1088,9 @@ async function replaceRelationalState(client, data) {
     await client.query(
       `
         INSERT INTO activity_corrections (
-          id, source_type, source_id, root_source_type, root_source_id, reason, created_at, actor_user_id, actor_name
+          id, source_type, source_id, root_source_type, root_source_id, reason, created_at, actor_user_id, actor_name, is_private
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       `,
       [
         correction.id,
@@ -1081,7 +1101,8 @@ async function replaceRelationalState(client, data) {
         correction.reason ?? "",
         toTimestampValue(correction.createdAt),
         correction.actorUserId ?? null,
-        correction.actorName ?? null
+        correction.actorName ?? null,
+        Boolean(correction.isPrivate)
       ]
     );
 
@@ -1341,9 +1362,9 @@ async function insertCorrection(client, correction) {
   await client.query(
     `
       INSERT INTO activity_corrections (
-        id, source_type, source_id, root_source_type, root_source_id, reason, created_at, actor_user_id, actor_name
+        id, source_type, source_id, root_source_type, root_source_id, reason, created_at, actor_user_id, actor_name, is_private
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     `,
     [
       correction.id,
@@ -1354,7 +1375,8 @@ async function insertCorrection(client, correction) {
       correction.reason ?? "",
       toTimestampValue(correction.createdAt),
       correction.actorUserId ?? null,
-      correction.actorName ?? null
+      correction.actorName ?? null,
+      Boolean(correction.isPrivate)
     ]
   );
 
@@ -1428,7 +1450,16 @@ async function runRelationalAction(source, action) {
   }
 }
 
-async function getState() {
+function filterDataForUser(data, user) {
+  const normalized = normalizeData(data);
+  if (isMasterUser(user)) return normalized;
+  return {
+    ...normalized,
+    corrections: normalized.corrections.filter((correction) => !correction.isPrivate)
+  };
+}
+
+async function getState(user = null) {
   const data = await loadStateFromRelational();
   const updatedResult = await pool.query(`
     SELECT MAX(updated_at) AS updated_at
@@ -1442,7 +1473,7 @@ async function getState() {
   `);
   const revisionResult = await pool.query("SELECT COALESCE(MAX(id), 0) AS revision FROM app_revisions");
   return {
-    data,
+    data: filterDataForUser(data, user),
     updatedAt: updatedResult.rows[0]?.updated_at,
     revision: Number(revisionResult.rows[0]?.revision ?? 0)
   };
@@ -1658,7 +1689,7 @@ async function getReport(pathname, searchParams) {
   };
 }
 
-async function saveState(data) {
+async function saveState(data, user = null) {
   const normalized = normalizeData(data);
   const client = await pool.connect();
 
@@ -1678,7 +1709,7 @@ async function saveState(data) {
     client.release();
   }
 
-  return getState();
+  return getState(user);
 }
 
 function toCleanText(value, fallback = "") {
@@ -1702,8 +1733,36 @@ function toNonNegativeInt(value) {
 }
 
 function normalizeStockCondition(value) {
-  const condition = String(value ?? "").trim().toLowerCase();
-  return ["used", "use", "yes", "y", "true", "1"].includes(condition) ? "used" : "new";
+  return normalizeStockConditions(value).join(",");
+}
+
+function normalizeStockConditions(value) {
+  const rawValues = Array.isArray(value)
+    ? value
+    : String(value ?? "")
+        .split(/[,\n|/]+/)
+        .flatMap((entry) => String(entry).trim().split(/\s+/));
+  const aliases = new Map([
+    ["new", "new"],
+    ["used", "used"],
+    ["use", "used"],
+    ["yes", "used"],
+    ["y", "used"],
+    ["true", "used"],
+    ["1", "used"],
+    ["internal", "internal"],
+    ["inside", "internal"],
+    ["in-house", "internal"]
+  ]);
+  const conditions = [];
+  rawValues.forEach((entry) => {
+    const normalized = aliases.get(String(entry ?? "").trim().toLowerCase());
+    if (normalized && !conditions.includes(normalized)) conditions.push(normalized);
+  });
+  if (conditions.includes("new") && conditions.includes("used")) {
+    conditions.splice(conditions.indexOf("new"), 1);
+  }
+  return conditions.length ? conditions : ["new"];
 }
 
 function syncInventoryTotals(item) {
@@ -2195,6 +2254,7 @@ function getActivityRecord(data, type, id) {
 
 function canCorrectActivityKind(correctionKind, user) {
   const role = normalizeRole(user?.role);
+  if (role === "master") return true;
   if (role === "administrative") return true;
   if (["create", "stock-in"].includes(correctionKind)) return role === "admin";
   if (correctionKind === "stock-out") return role === "engineer";
@@ -2374,10 +2434,116 @@ async function handleCorrectActivityAction(user, payload) {
       itemRows: correctionRows,
       createdAt: timestamp,
       actorUserId: user.id,
-      actorName: user.name
+      actorName: user.name,
+      isPrivate: isMasterUser(user) || Boolean(payload.privateAudit)
     };
     await insertCorrection(client, correction);
     return { correction };
+  });
+}
+
+async function handleMasterUpdateItemAction(user, payload) {
+  requireAnyRole(user, ["master"], "Only Master users can use Master Control.");
+  return runRelationalAction("action:master-update-item", async (data, client) => {
+    const itemId = toCleanText(payload.itemId);
+    const reason = toCleanText(payload.reason);
+    const values = payload.values && typeof payload.values === "object" ? payload.values : {};
+    const item = data.inventory.find((entry) => entry.id === itemId);
+    if (!item) throw new Error("The inventory item could not be found.");
+    if (!reason) throw new Error("Enter a correction reason before saving.");
+
+    const nextValues = {
+      brand: toCleanText(values.brand, "Generic"),
+      model: toCleanText(values.model, "Standard"),
+      name: toCleanText(values.name),
+      sku: toCleanText(values.sku),
+      unit: toCleanText(values.unit, "unit").toUpperCase(),
+      location: toCleanText(values.location, "Main Store"),
+      ownQuantity: toNonNegativeInt(values.ownQuantity),
+      consignmentQuantity: toNonNegativeInt(values.consignmentQuantity),
+      reorderLevel: toNonNegativeInt(values.reorderLevel),
+      stockCondition: normalizeStockCondition(values.stockCondition)
+    };
+    if (!nextValues.name || !nextValues.sku) {
+      throw new Error("Description and stock code are required.");
+    }
+
+    const previousValues = {
+      brand: item.brand ?? "Generic",
+      model: item.model ?? "Standard",
+      name: item.name ?? "-",
+      sku: item.sku ?? "-",
+      unit: item.unit ?? "-",
+      location: item.location ?? "Main Store",
+      ownQuantity: Number(item.ownQuantity ?? item.quantity ?? 0),
+      consignmentQuantity: Number(item.consignmentQuantity ?? 0),
+      reorderLevel: Number(item.reorderLevel ?? 0),
+      stockCondition: normalizeStockCondition(item.stockCondition)
+    };
+    const changedFields = Object.keys(nextValues).filter((key) => String(previousValues[key] ?? "") !== String(nextValues[key] ?? ""));
+    if (!changedFields.length) throw new Error("No changes were entered.");
+
+    const timestamp = new Date().toISOString();
+    const balanceBefore = {
+      quantity: Number(item.quantity ?? 0),
+      ownQuantity: Number(item.ownQuantity ?? item.quantity ?? 0),
+      consignmentQuantity: Number(item.consignmentQuantity ?? 0),
+      consignmentBaseline: Number(item.consignmentBaseline ?? item.consignmentQuantity ?? 0),
+      consignmentToRestock: getConsignmentUsed(item)
+    };
+
+    Object.assign(item, nextValues, {
+      consignmentBaseline: Math.max(Number(item.consignmentBaseline ?? 0), nextValues.consignmentQuantity),
+      lastUpdatedAt: timestamp,
+      lastUpdatedByUserId: user.id,
+      lastUpdatedByName: user.name
+    });
+    syncInventoryTotals(item);
+    await updateInventoryItem(client, item);
+
+    const balanceAfter = {
+      quantity: Number(item.quantity ?? 0),
+      ownQuantity: Number(item.ownQuantity ?? item.quantity ?? 0),
+      consignmentQuantity: Number(item.consignmentQuantity ?? 0),
+      consignmentBaseline: Number(item.consignmentBaseline ?? item.consignmentQuantity ?? 0),
+      consignmentToRestock: getConsignmentUsed(item)
+    };
+
+    const correction = {
+      id: crypto.randomUUID(),
+      sourceType: "create",
+      sourceId: item.id,
+      rootSourceType: "create",
+      rootSourceId: item.id,
+      reason,
+      itemRows: [{
+        itemId: item.id,
+        brand: item.brand ?? "Generic",
+        model: item.model ?? "Standard",
+        name: item.name,
+        sku: item.sku,
+        unit: item.unit ?? "-",
+        location: item.location ?? "Main Store",
+        quantityDelta: balanceAfter.quantity - balanceBefore.quantity,
+        ownDelta: balanceAfter.ownQuantity - balanceBefore.ownQuantity,
+        consignmentDelta: balanceAfter.consignmentQuantity - balanceBefore.consignmentQuantity,
+        quantity: balanceAfter.quantity,
+        stockType: "own",
+        ownQuantity: balanceAfter.ownQuantity,
+        consignmentQuantity: balanceAfter.consignmentQuantity,
+        previousValues,
+        correctedValues: nextValues,
+        changedFields,
+        balanceBefore,
+        balanceAfter
+      }],
+      createdAt: timestamp,
+      actorUserId: user.id,
+      actorName: user.name,
+      isPrivate: true
+    };
+    await insertCorrection(client, correction);
+    return { item, correction };
   });
 }
 
@@ -2390,7 +2556,8 @@ async function handleAction(req, res, actionName, user) {
       "relocate-stock": handleRelocateStockAction,
       "add-stock": handleAddStockAction,
       "draw-stock": handleDrawStockAction,
-      "correct-activity": handleCorrectActivityAction
+      "correct-activity": handleCorrectActivityAction,
+      "master-update-item": handleMasterUpdateItemAction
     };
     const handler = handlers[actionName];
     if (!handler) {
@@ -2473,7 +2640,7 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/data" && req.method === "GET") {
     const user = await requireSessionUser(req, res);
     if (!user) return;
-    sendJson(res, 200, await getState());
+    sendJson(res, 200, await getState(user));
     return;
   }
 
@@ -2509,7 +2676,7 @@ async function handleApi(req, res, pathname) {
     try {
       const body = await readRequestBody(req);
       const parsed = JSON.parse(body || "{}");
-      sendJson(res, 200, await saveState(parsed.data ?? parsed));
+      sendJson(res, 200, await saveState(parsed.data ?? parsed, user));
     } catch (error) {
       sendJson(res, 400, { ok: false, error: error.message });
     }

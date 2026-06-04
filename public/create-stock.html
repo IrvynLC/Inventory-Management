@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Create New Stock | Inventory Management System</title>
+  <title>Create Stock | Inventory Management System</title>
   <script>
     if ("scrollRestoration" in history) history.scrollRestoration = "manual";
     document.documentElement.scrollTop = 0;
@@ -19,7 +19,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="stock-workflow.css">
+  <link rel="stylesheet" href="stock-workflow.css?v=20260603-multi-condition">
 </head>
 <body data-page="create-stock">
   <div class="app-shell">
@@ -88,8 +88,8 @@
     <main class="main-shell">
       <header class="topbar">
         <div class="topbar-copy">
-          <p class="breadcrumb"><a href="inventory.html">Inventory</a><span>&gt;</span><a href="add-stock.html">Add Stock</a><span>&gt;</span><span>Create New Stock</span></p>
-          <h2>Create New Stock</h2>
+          <p class="breadcrumb"><a href="inventory.html">Inventory</a><span>&gt;</span><a href="add-stock.html">Add Stock</a><span>&gt;</span><span>Create Stock</span></p>
+          <h2>Create Stock</h2>
           <p class="hero-copy">Create a brand-new stock record with item details, stock code, unit, and storage location.</p>
         </div>
         <div class="topbar-actions">
@@ -159,17 +159,16 @@
             <span class="stock-workflow-step-number">3</span>
             <div>
               <h3>Condition and Location</h3>
-              <p class="section-copy">Finish the new record with stock condition and storage location.</p>
+              <p class="section-copy">Finish the record with stock condition and storage location.</p>
             </div>
           </div>
           <div class="field-grid create-stock-location-grid">
-            <label class="custom-select-field">
+            <fieldset class="condition-checkbox-group">
               Condition
-              <select name="stockCondition" required>
-                <option value="new" selected>New Stock</option>
-                <option value="used">Used</option>
-              </select>
-            </label>
+              <label><input name="stockCondition" type="checkbox" value="new" checked> New</label>
+              <label><input name="stockCondition" type="checkbox" value="used"> Used</label>
+              <label><input name="stockCondition" type="checkbox" value="internal"> Internal</label>
+            </fieldset>
             <label>
               Location
               <input name="location" type="text" placeholder="Main Store A-01" required>
@@ -185,6 +184,6 @@
     </main>
   </div>
 
-  <script src="app.js?v=20260506-clear-data" defer></script>
+  <script src="app.js?v=20260603-multi-condition" defer></script>
 </body>
 </html>

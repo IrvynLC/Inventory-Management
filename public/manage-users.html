@@ -38,7 +38,7 @@
         <div class="panel-header panel-header-tight">
           <div>
             <h3>User Details</h3>
-            <p class="section-copy">Only Administrative users can create accounts.</p>
+            <p class="section-copy">Only Master or Administrative users can create accounts.</p>
           </div>
         </div>
         <div class="field-grid">
@@ -50,6 +50,7 @@
             Role
             <select name="role" required>
               <option value="" disabled selected>Select a role</option>
+              <option value="Master">Master</option>
               <option value="Admin">Admin</option>
               <option value="Engineer">Engineer</option>
               <option value="Administrative">Administrative</option>
@@ -84,6 +85,6 @@
     </form>
   </main>
 
-  <script src="app.js?v=20260602-create-users" defer></script>
+  <script src="app.js?v=20260603-master-control" defer></script>
 </body>
 </html>
