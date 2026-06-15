@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reports & Insights | Inventory Management System</title>
+  <script>
+    if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    window.scrollTo(0, 0);
+    window.addEventListener("load", () => {
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      window.scrollTo(0, 0);
+    });
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css?v=20260604-reports-page">
+</head>
+<body data-page="reports">
+  <div class="app-shell reports-control-shell">
+    <div class="sidebar-backdrop" data-sidebar-close></div>
+    <aside class="sidebar" id="app-sidebar">
+      <button class="sidebar-close" type="button" data-sidebar-close aria-label="Close navigation">&times;</button>
+
+      <div class="brand-block">
+        <div class="brand-mark">IMS</div>
+        <div>
+          <p class="eyebrow">Inventory Workspace</p>
+          <h1>Inventory Hub</h1>
+          <p class="brand-meta">Operational stock control</p>
+        </div>
+      </div>
+
+      <nav class="nav-section" aria-label="Primary navigation">
+        <p class="nav-section-label">Navigation</p>
+        <div class="nav-card">
+          <a class="nav-link" href="index.html">
+            <span class="nav-icon">HM</span>
+            <span class="nav-copy">
+              <span class="nav-title">Home</span>
+              <span class="nav-subtitle">Access core inventory workflows</span>
+            </span>
+          </a>
+          <a class="nav-link active" href="reports.html">
+            <span class="nav-icon">RP</span>
+            <span class="nav-copy">
+              <span class="nav-title">Reports</span>
+              <span class="nav-subtitle">Review stock, usage, and movement summaries</span>
+            </span>
+          </a>
+        </div>
+      </nav>
+    </aside>
+
+    <main class="main-shell">
+      <header class="topbar reports-hero">
+        <div class="topbar-copy">
+          <nav class="breadcrumb" aria-label="Breadcrumb">
+            <a href="index.html">Inventory</a>
+            <span aria-hidden="true">›</span>
+            <span>Reports</span>
+          </nav>
+          <h2>Reports & Insights</h2>
+          <p class="hero-copy">Review stock health, recent movement, usage trends, consignment restock needs, and detailed report exports.</p>
+        </div>
+        <div class="topbar-actions">
+          <button class="button-link button-link-ghost reports-menu-button" type="button" data-sidebar-toggle>Menu</button>
+          <a class="button-link" href="index.html">Back to Home</a>
+        </div>
+      </header>
+
+      <section class="reports-workspace" id="reports-workspace">
+        <div class="dashboard-loading">Loading reports...</div>
+      </section>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js" defer></script>
+  <script src="app.js?v=20260604-reports-page" defer></script>
+</body>
+</html>

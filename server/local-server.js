@@ -251,7 +251,8 @@ async function initializeDatabase() {
       created_by_user_id TEXT,
       created_by_name TEXT,
       last_updated_by_user_id TEXT,
-      last_updated_by_name TEXT
+      last_updated_by_name TEXT,
+      is_hidden BOOLEAN NOT NULL DEFAULT false
     );
 
     CREATE INDEX IF NOT EXISTS inventory_items_sku_idx ON inventory_items (lower(sku));
@@ -409,6 +410,13 @@ async function initializeDatabase() {
     BEGIN
       ALTER TABLE activity_corrections
         ADD COLUMN IF NOT EXISTS is_private BOOLEAN NOT NULL DEFAULT false;
+
+      ALTER TABLE inventory_items
+        ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN NOT NULL DEFAULT false;
+
+      UPDATE inventory_items
+      SET unit = 'PCS'
+      WHERE upper(trim(unit)) = 'PC';
 
       IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'inventory_items_stock_condition_check') THEN
         ALTER TABLE inventory_items
@@ -859,7 +867,8 @@ async function loadStateFromRelational(client = pool) {
       createdByUserId: row.created_by_user_id,
       createdByName: row.created_by_name,
       lastUpdatedByUserId: row.last_updated_by_user_id,
-      lastUpdatedByName: row.last_updated_by_name
+      lastUpdatedByName: row.last_updated_by_name,
+      isHidden: Boolean(row.is_hidden)
     })),
     adjustments: adjustmentsResult.rows.map((row) => compactObject({
       id: row.id,
@@ -934,9 +943,9 @@ async function replaceRelationalState(client, data) {
         INSERT INTO inventory_items (
           id, brand, model, name, sku, unit, quantity, own_quantity, consignment_quantity,
           consignment_baseline, stock_condition, reorder_level, location, created_at, last_updated_at,
-          created_by_user_id, created_by_name, last_updated_by_user_id, last_updated_by_name
+          created_by_user_id, created_by_name, last_updated_by_user_id, last_updated_by_name, is_hidden
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
       `,
       [
         item.id,
@@ -944,7 +953,7 @@ async function replaceRelationalState(client, data) {
         toCleanText(item.model, "Standard"),
         toCleanText(item.name, "Item"),
         toCleanText(item.sku, item.id),
-        toCleanText(item.unit, "unit"),
+        normalizeUnitValue(item.unit),
         Number(item.quantity ?? 0),
         Number(item.ownQuantity ?? 0),
         Number(item.consignmentQuantity ?? 0),
@@ -957,7 +966,8 @@ async function replaceRelationalState(client, data) {
         item.createdByUserId ?? null,
         item.createdByName ?? null,
         item.lastUpdatedByUserId ?? null,
-        item.lastUpdatedByName ?? null
+        item.lastUpdatedByName ?? null,
+        Boolean(item.isHidden)
       ]
     );
   }
@@ -1157,9 +1167,9 @@ async function insertInventoryItem(client, rawItem) {
       INSERT INTO inventory_items (
         id, brand, model, name, sku, unit, quantity, own_quantity, consignment_quantity,
         consignment_baseline, stock_condition, reorder_level, location, created_at, last_updated_at,
-        created_by_user_id, created_by_name, last_updated_by_user_id, last_updated_by_name
+        created_by_user_id, created_by_name, last_updated_by_user_id, last_updated_by_name, is_hidden
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
     `,
     [
       item.id,
@@ -1167,7 +1177,7 @@ async function insertInventoryItem(client, rawItem) {
       toCleanText(item.model, "Standard"),
       toCleanText(item.name, "Item"),
       toCleanText(item.sku, item.id),
-      toCleanText(item.unit, "unit"),
+      normalizeUnitValue(item.unit),
       Number(item.quantity ?? 0),
       Number(item.ownQuantity ?? 0),
       Number(item.consignmentQuantity ?? 0),
@@ -1180,7 +1190,8 @@ async function insertInventoryItem(client, rawItem) {
       item.createdByUserId ?? null,
       item.createdByName ?? null,
       item.lastUpdatedByUserId ?? null,
-      item.lastUpdatedByName ?? null
+      item.lastUpdatedByName ?? null,
+      Boolean(item.isHidden)
     ]
   );
   return item;
@@ -1208,7 +1219,8 @@ async function updateInventoryItem(client, rawItem) {
           created_by_user_id = $16,
           created_by_name = $17,
           last_updated_by_user_id = $18,
-          last_updated_by_name = $19
+          last_updated_by_name = $19,
+          is_hidden = $20
       WHERE id = $1
     `,
     [
@@ -1217,7 +1229,7 @@ async function updateInventoryItem(client, rawItem) {
       toCleanText(item.model, "Standard"),
       toCleanText(item.name, "Item"),
       toCleanText(item.sku, item.id),
-      toCleanText(item.unit, "unit"),
+      normalizeUnitValue(item.unit),
       Number(item.quantity ?? 0),
       Number(item.ownQuantity ?? 0),
       Number(item.consignmentQuantity ?? 0),
@@ -1230,7 +1242,8 @@ async function updateInventoryItem(client, rawItem) {
       item.createdByUserId ?? null,
       item.createdByName ?? null,
       item.lastUpdatedByUserId ?? null,
-      item.lastUpdatedByName ?? null
+      item.lastUpdatedByName ?? null,
+      Boolean(item.isHidden)
     ]
   );
   return item;
@@ -1494,7 +1507,8 @@ async function getLowStockReport() {
       consignment_quantity,
       reorder_level
     FROM inventory_items
-    WHERE quantity <= reorder_level
+    WHERE NOT is_hidden
+      AND quantity <= reorder_level
     ORDER BY quantity ASC, name ASC
   `);
 
@@ -1524,6 +1538,7 @@ async function getStockByLocationReport() {
       COALESCE(SUM(own_quantity), 0) AS own_quantity,
       COALESCE(SUM(consignment_quantity), 0) AS consignment_quantity
     FROM inventory_items
+    WHERE NOT is_hidden
     GROUP BY location
     ORDER BY location ASC
   `);
@@ -1553,7 +1568,8 @@ async function getConsignmentRestockReport() {
       consignment_baseline,
       GREATEST(consignment_baseline - consignment_quantity, 0) AS restock_quantity
     FROM inventory_items
-    WHERE GREATEST(consignment_baseline - consignment_quantity, 0) > 0
+    WHERE NOT is_hidden
+      AND GREATEST(consignment_baseline - consignment_quantity, 0) > 0
     ORDER BY restock_quantity DESC, name ASC
   `);
 
@@ -1717,6 +1733,11 @@ function toCleanText(value, fallback = "") {
   return text || fallback;
 }
 
+function normalizeUnitValue(value, fallback = "unit") {
+  const unit = toCleanText(value, fallback).toUpperCase();
+  return unit === "PC" ? "PCS" : unit;
+}
+
 function toCleanMultilineText(value, fallback = "") {
   const text = String(value ?? "")
     .replace(/\r\n?/g, "\n")
@@ -1839,7 +1860,7 @@ async function handleCreateStockAction(user, payload) {
       model: toCleanText(payload.model),
       name: toCleanText(payload.name),
       sku: toCleanText(payload.sku),
-      unit: toCleanText(payload.unit),
+      unit: normalizeUnitValue(payload.unit),
       quantity: ownQuantity + consignmentQuantity,
       ownQuantity,
       consignmentQuantity,
@@ -2295,7 +2316,7 @@ async function handleCorrectActivityAction(user, payload) {
         model: toCleanText(corrected.model),
         name: toCleanText(corrected.name),
         sku: toCleanText(corrected.sku),
-        unit: toCleanText(corrected.unit),
+        unit: normalizeUnitValue(corrected.unit),
         location: toCleanText(corrected.location)
       };
 
@@ -2452,16 +2473,25 @@ async function handleMasterUpdateItemAction(user, payload) {
     if (!item) throw new Error("The inventory item could not be found.");
     if (!reason) throw new Error("Enter a correction reason before saving.");
 
+    const hasHiddenValue = Object.prototype.hasOwnProperty.call(values, "isHidden")
+      || Object.prototype.hasOwnProperty.call(values, "hidden")
+      || Object.prototype.hasOwnProperty.call(values, "isArchived")
+      || Object.prototype.hasOwnProperty.call(payload, "isHidden")
+      || Object.prototype.hasOwnProperty.call(payload, "hidden")
+      || Object.prototype.hasOwnProperty.call(payload, "isArchived")
+      || Boolean(payload.forceHiddenUpdate);
+    const requestedHiddenValue = values.isHidden ?? values.hidden ?? values.isArchived ?? payload.isHidden ?? payload.hidden ?? payload.isArchived;
     const nextValues = {
       brand: toCleanText(values.brand, "Generic"),
       model: toCleanText(values.model, "Standard"),
       name: toCleanText(values.name),
       sku: toCleanText(values.sku),
-      unit: toCleanText(values.unit, "unit").toUpperCase(),
+      unit: normalizeUnitValue(values.unit),
       location: toCleanText(values.location, "Main Store"),
       ownQuantity: toNonNegativeInt(values.ownQuantity),
       consignmentQuantity: toNonNegativeInt(values.consignmentQuantity),
       reorderLevel: toNonNegativeInt(values.reorderLevel),
+      isHidden: Boolean(requestedHiddenValue),
       stockCondition: normalizeStockCondition(values.stockCondition)
     };
     if (!nextValues.name || !nextValues.sku) {
@@ -2478,9 +2508,19 @@ async function handleMasterUpdateItemAction(user, payload) {
       ownQuantity: Number(item.ownQuantity ?? item.quantity ?? 0),
       consignmentQuantity: Number(item.consignmentQuantity ?? 0),
       reorderLevel: Number(item.reorderLevel ?? 0),
+      isHidden: Boolean(item.isHidden ?? item.hidden ?? item.isArchived),
       stockCondition: normalizeStockCondition(item.stockCondition)
     };
-    const changedFields = Object.keys(nextValues).filter((key) => String(previousValues[key] ?? "") !== String(nextValues[key] ?? ""));
+    const changedFields = Object.keys(nextValues).filter((key) => {
+      if (key === "isHidden") {
+        if (!hasHiddenValue) return false;
+        return Boolean(previousValues.isHidden) !== Boolean(nextValues.isHidden);
+      }
+      return String(previousValues[key] ?? "") !== String(nextValues[key] ?? "");
+    });
+    if (!changedFields.length && hasHiddenValue) {
+      changedFields.push("isHidden");
+    }
     if (!changedFields.length) throw new Error("No changes were entered.");
 
     const timestamp = new Date().toISOString();

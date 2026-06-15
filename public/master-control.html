@@ -110,6 +110,12 @@
                 </button>
                 <div class="stock-picker-popover" id="master-stock-picker-popover" hidden>
                   <input id="master-stock-picker-search" class="stock-picker-search" type="search" placeholder="Search item, SKU, brand, category, or condition" autocomplete="off">
+                  <div class="stock-picker-quick-filters" aria-label="Stock filters">
+                    <button type="button" class="stock-picker-filter is-active" data-stock-picker-filter="all" aria-pressed="true">All</button>
+                    <button type="button" class="stock-picker-filter" data-stock-picker-filter="own" aria-pressed="false">LC Stock</button>
+                    <button type="button" class="stock-picker-filter" data-stock-picker-filter="consignment" aria-pressed="false">Consignment</button>
+                    <button type="button" class="stock-picker-filter" data-stock-picker-filter="used" aria-pressed="false">Used</button>
+                  </div>
                   <div class="stock-picker-list" id="master-stock-picker-list" role="listbox" aria-label="Inventory items"></div>
                 </div>
               </div>
@@ -135,6 +141,10 @@
             <label>LC Stock<input id="master-own-quantity" name="ownQuantity" type="number" min="0" step="1" required></label>
             <label>Consignment Stock<input id="master-consignment-quantity" name="consignmentQuantity" type="number" min="0" step="1" required></label>
             <label>Reorder Level<input id="master-reorder-level" name="reorderLevel" type="number" min="0" step="1" required></label>
+            <label class="checkbox-card">
+              <input id="master-is-hidden" name="isHidden" type="checkbox">
+              Hide from inventory list and stock workflows
+            </label>
             <fieldset class="condition-checkbox-group">
               Condition
               <label><input name="stockCondition" type="checkbox" value="new"> New</label>
@@ -166,6 +176,6 @@
     </main>
   </div>
 
-  <script src="app.js?v=20260603-multi-condition" defer></script>
+  <script src="app.js?v=20260608-master-hide-force" defer></script>
 </body>
 </html>

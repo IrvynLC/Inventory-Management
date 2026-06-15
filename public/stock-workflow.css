@@ -224,6 +224,27 @@ body[data-page="master-control"] .condition-checkbox-group input {
   accent-color: #17345c;
 }
 
+body[data-page="master-control"] .checkbox-card {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #d8e0ec;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #17345c;
+  font-size: 0.88rem;
+  font-weight: 800;
+  gap: 8px;
+}
+
+body[data-page="master-control"] .checkbox-card input {
+  width: 16px;
+  height: 16px;
+  accent-color: #17345c;
+}
+
 body[data-page="master-control"] .field-grid input,
 body[data-page="master-control"] .field-grid select,
 body[data-page="master-control"] textarea,

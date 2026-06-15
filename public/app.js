@@ -7,7 +7,7 @@ const API_LOGOUT_ENDPOINT = "/api/logout";
 const API_SESSION_ENDPOINT = "/api/session";
 const API_USERS_ENDPOINT = "/api/users";
 const API_TIMEOUT_MS = 4000;
-const PROTECTED_PAGES = new Set(["home", "inventory", "activity-history", "activity-detail", "add-stock", "draw-stock", "create-stock", "relocate-stock", "handover", "manage-users", "master-control"]);
+const PROTECTED_PAGES = new Set(["home", "reports", "inventory", "activity-history", "activity-detail", "add-stock", "draw-stock", "create-stock", "relocate-stock", "handover", "manage-users", "master-control"]);
 
 let currentUserCache = null;
 let sessionLoadPromise = null;
@@ -100,6 +100,9 @@ function canAccessPage(page, user) {
 
   const role = normalizeRole(user.role);
   if (role === "master") return true;
+  if (page === "reports") {
+    return false;
+  }
   if (["home", "inventory", "activity-history", "activity-detail", "handover"].includes(page)) {
     return true;
   }
@@ -156,6 +159,8 @@ function canAccessHref(href, user) {
   const fileName = String(href || "").split("#")[0].split("?")[0] || "index.html";
   const pageByFile = {
     "index.html": "home",
+    "dashboard.html": "reports",
+    "reports.html": "reports",
     "inventory.html": "inventory",
     "activity-history.html": "activity-history",
     "activity-detail.html": "activity-detail",
@@ -177,12 +182,7 @@ function redirectToLogin() {
 }
 
 function redirectAfterLogin() {
-  const params = new URLSearchParams(window.location.search);
-  const next = params.get("next");
-  const safeNext = next && !next.includes("://") && !next.startsWith("//")
-    ? next
-    : "index.html";
-  window.location.replace(safeNext);
+  window.location.replace("index.html");
 }
 
 async function ensureAuthenticatedSession() {
@@ -372,6 +372,7 @@ function normalizeInventoryRecord(item) {
     consignmentQuantity,
     consignmentBaseline,
     stockCondition: normalizeStockCondition(item.stockCondition ?? item.condition ?? item.isUsedStock),
+    isHidden: Boolean(item.isHidden ?? item.hidden ?? item.isArchived ?? item.archived),
     internalFlag: normalizeInternalFlag(item.internalFlag ?? item.internal ?? item.isInternalStock),
     isInternalStock: isInternalStock(item.internalFlag ?? item.internal ?? item.isInternalStock),
     location: item.location ?? "Main Store",
@@ -593,6 +594,14 @@ function formatStockPurposeLabel(purpose) {
   if (purpose === "manual") return "Additional";
   if (purpose === "consignment") return "Consignment";
   return "LC Stock";
+}
+
+function isInventoryItemHidden(item) {
+  return Boolean(item?.isHidden ?? item?.hidden ?? item?.isArchived ?? item?.archived);
+}
+
+function getVisibleInventoryItems(items) {
+  return (items ?? []).filter((item) => !isInventoryItemHidden(item));
 }
 
 function calculateStockInAllocation(item, quantity, purpose = "own") {
@@ -955,7 +964,12 @@ function escapeHtml(text) {
 
 function formatUnitDisplay(unit) {
   const value = String(unit ?? "").trim();
+  if (value.toUpperCase() === "PC") return "PCS";
   return value ? value.toUpperCase() : "-";
+}
+
+function normalizeUnitInput(value) {
+  return formatUnitDisplay(value);
 }
 
 function bindUppercaseInput(input) {
@@ -976,7 +990,14 @@ function escapeCsvValue(value) {
   return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
-function downloadInventoryCsv(items) {
+function formatCsvQuantity(quantity, unit, options = {}) {
+  const value = Number(quantity ?? 0);
+  if (!Number.isFinite(value)) return quantity ?? "";
+  if (value <= 0) return options.blankZero ? "" : 0;
+  return formatUnitDisplay(unit) === "MT" ? `${value}m` : value;
+}
+
+function buildInventoryCsv(items) {
   const headers = ["Brand", "Category", "Description", "Stock Code", "Stock Balance", "Unit", "Location", "Status"];
   const rows = items.map((item) => {
     const status = getInventoryStatus(item);
@@ -985,13 +1006,17 @@ function downloadInventoryCsv(items) {
       item.model ?? "Standard",
       item.name ?? "",
       item.sku ?? "",
-      item.quantity ?? 0,
-      item.unit ?? "-",
+      formatCsvQuantity(item.quantity ?? 0, item.unit),
+      formatUnitDisplay(item.unit),
       item.location ?? "Main Store",
       status.label
     ].map(escapeCsvValue).join(",");
   });
-  const csv = [headers.map(escapeCsvValue).join(","), ...rows].join("\r\n");
+  return [headers.map(escapeCsvValue).join(","), ...rows].join("\r\n");
+}
+
+function downloadInventoryCsv(items) {
+  const csv = buildInventoryCsv(items);
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -1003,7 +1028,7 @@ function downloadInventoryCsv(items) {
   URL.revokeObjectURL(url);
 }
 
-async function downloadInventoryExcel(items) {
+async function downloadInventoryExcel(items, filePrefix = "inventory-export") {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Inventory Management System";
   workbook.created = new Date();
@@ -1063,7 +1088,7 @@ async function downloadInventoryExcel(items) {
   const baseAlignment = { vertical: "middle", horizontal: "center", wrapText: true };
   const makeFill = (argb) => ({ type: "pattern", pattern: "solid", fgColor: { argb } });
   const applyCellStyle = (cell, fill, alignment = baseAlignment) => {
-    cell.font = { name: "Calibri", size: 12, color: { argb: colors.black } };
+    cell.font = { name: "Calibri", size: 10, color: { argb: colors.black } };
     cell.alignment = alignment;
     cell.border = thinBorder;
     if (fill) cell.fill = makeFill(fill);
@@ -1075,14 +1100,14 @@ async function downloadInventoryExcel(items) {
     let lastIndex = 0;
     text.replace(highlightPattern, (match, offset) => {
       if (offset > lastIndex) {
-        parts.push({ text: text.slice(lastIndex, offset), font: { name: "Calibri", size: 12, color: { argb: colors.black } } });
+        parts.push({ text: text.slice(lastIndex, offset), font: { name: "Calibri", size: 10, color: { argb: colors.black } } });
       }
-      parts.push({ text: match, font: { name: "Calibri", size: 12, bold: true, color: { argb: colors.red } } });
+      parts.push({ text: match, font: { name: "Calibri", size: 10, bold: true, color: { argb: colors.red } } });
       lastIndex = offset + match.length;
       return match;
     });
     if (lastIndex < text.length) {
-      parts.push({ text: text.slice(lastIndex), font: { name: "Calibri", size: 12, color: { argb: colors.black } } });
+      parts.push({ text: text.slice(lastIndex), font: { name: "Calibri", size: 10, color: { argb: colors.black } } });
     }
     return parts.length ? { richText: parts } : text;
   };
@@ -1094,7 +1119,7 @@ async function downloadInventoryExcel(items) {
     D: "STOCK CODE",
     E: "UOM",
     F: "Consgt",
-    H: "LC      Stock",
+    H: "LC Stock",
     J: "LOCATION",
     K: "Auto Count"
   };
@@ -1105,6 +1130,13 @@ async function downloadInventoryExcel(items) {
     const brandCompare = collator.compare(String(a.brand ?? "Generic"), String(b.brand ?? "Generic"));
     if (brandCompare) return brandCompare;
     return collator.compare(String(a.name ?? ""), String(b.name ?? ""));
+  });
+
+  const makeThickBorder = (argb) => ({
+    top: { style: "thick", color: { argb } },
+    left: { style: "thick", color: { argb } },
+    bottom: { style: "thick", color: { argb } },
+    right: { style: "thick", color: { argb } }
   });
 
   const writeTitleRow = (rowNumber, suffix = "", suffixColor = colors.black, titleText = exportTitle) => {
@@ -1120,8 +1152,8 @@ async function downloadInventoryExcel(items) {
       : titleText;
     titleCell.font = { name: "Arial", size: 15, bold: true, underline: true, color: { argb: colors.black } };
     titleCell.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
-    titleCell.border = thinBorder;
-    worksheet.getRow(rowNumber).height = 35.5;
+    titleCell.border = makeThickBorder(suffixColor);
+    worksheet.getRow(rowNumber).height = 23.5;
   };
 
   const writeHeaderRow = (rowNumber) => {
@@ -1130,7 +1162,7 @@ async function downloadInventoryExcel(items) {
     Object.entries(headers).forEach(([column, label]) => {
       const cell = worksheet.getCell(`${column}${rowNumber}`);
       cell.value = label;
-      cell.font = { name: column === "H" ? "Arial" : "Calibri", size: 11, bold: true, underline: true, color: { argb: colors.black } };
+      cell.font = { name: "Calibri", size: 10, bold: true, underline: true, color: { argb: colors.black } };
       cell.alignment = baseAlignment;
       cell.border = thinBorder;
       if (column === "F") cell.fill = makeFill(colors.pink);
@@ -1145,6 +1177,11 @@ async function downloadInventoryExcel(items) {
   const writeItemRows = (sectionItems, startRowNumber) => {
     let rowNumber = startRowNumber;
     let previousModel = "";
+    const formatExportQuantity = (quantity, unit, { blankZero = false } = {}) => {
+      const value = Number(quantity ?? 0);
+      if (!value) return blankZero ? "" : 0;
+      return formatUnitDisplay(unit) === "MT" ? `${value}m` : value;
+    };
     sortExportItems(sectionItems).forEach((item, index) => {
       const model = String(item.model ?? "Standard");
       if (index > 0 && collator.compare(previousModel, model) !== 0) {
@@ -1152,7 +1189,7 @@ async function downloadInventoryExcel(items) {
         rowNumber += 1;
       }
       const row = worksheet.getRow(rowNumber);
-      row.height = 18;
+      row.height = 15;
       previousModel = model;
       const ownQuantity = Number(item.ownQuantity ?? item.quantity ?? 0);
       const consignmentQuantity = Number(item.consignmentQuantity ?? 0);
@@ -1163,12 +1200,12 @@ async function downloadInventoryExcel(items) {
         C: item.name ?? "",
         D: item.sku ?? "",
         E: formatUnitDisplay(item.unit),
-        F: consignmentQuantity || "",
+        F: formatExportQuantity(consignmentQuantity, item.unit, { blankZero: true }),
         G: "",
-        H: ownQuantity,
+        H: formatExportQuantity(ownQuantity, item.unit),
         I: "",
         J: item.location ?? "Main Store",
-        K: totalQuantity
+        K: formatExportQuantity(totalQuantity, item.unit)
       };
       Object.entries(values).forEach(([column, value]) => {
         const cell = worksheet.getCell(`${column}${rowNumber}`);
@@ -1237,7 +1274,7 @@ async function downloadInventoryExcel(items) {
   if (internalItems.length) {
     worksheet.getRow(rowNumber).height = 14;
     rowNumber += 1;
-    writeTitleRow(rowNumber, "(Internal)", colors.black, "Product of Materials - Veloc");
+    writeTitleRow(rowNumber, "(Internal)", colors.blue, "Product of Materials - Veloc");
     rowNumber += 1;
     worksheet.getRow(rowNumber).height = 8;
     rowNumber += 1;
@@ -1247,7 +1284,8 @@ async function downloadInventoryExcel(items) {
 
   const finalRowNumber = Math.max(rowNumber, 5);
   worksheet.pageSetup = {
-    orientation: "landscape",
+    paperSize: 8,
+    orientation: "portrait",
     fitToPage: true,
     fitToWidth: 1,
     fitToHeight: 0
@@ -1264,7 +1302,7 @@ async function downloadInventoryExcel(items) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `inventory-export-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  link.download = `${filePrefix}-${new Date().toISOString().slice(0, 10)}.xlsx`;
   document.body.append(link);
   link.click();
   link.remove();
@@ -1972,14 +2010,18 @@ function renderCreateCorrectionChanges(item) {
     name: "Description",
     sku: "Stock Code",
     unit: "Unit",
-    location: "Location"
+    location: "Location",
+    isHidden: "Hidden"
   };
   const changedFields = item.changedFields?.length ? item.changedFields : Object.keys(labels);
+  const formatValue = (field, value) => field === "isHidden"
+    ? (value ? "Hidden" : "Visible")
+    : (value ?? "-");
   return changedFields.map((field) => `
     <tr>
       <td>${escapeHtml(labels[field] ?? field)}</td>
-      <td>${escapeHtml(item.previousValues?.[field] ?? "-")}</td>
-      <td><strong>${escapeHtml(item.correctedValues?.[field] ?? item[field] ?? "-")}</strong></td>
+      <td>${escapeHtml(formatValue(field, item.previousValues?.[field]))}</td>
+      <td><strong>${escapeHtml(formatValue(field, item.correctedValues?.[field] ?? item[field]))}</strong></td>
     </tr>
   `).join("");
 }
@@ -2526,6 +2568,7 @@ function attachSignOutHandler(button) {
 function standardizeInventorySidebar() {
   const page = document.body.dataset.page;
   const sidebarPages = new Set([
+    "reports",
     "inventory",
     "add-stock",
     "draw-stock",
@@ -2546,6 +2589,7 @@ function standardizeInventorySidebar() {
       : `${page}.html`;
   const navItems = [
     ["index.html", "HM", "Home", "Access core inventory workflows"],
+    ["reports.html", "RP", "Reports", "Stock, usage, and movement summaries"],
     ["inventory.html", "IM", "Inventory", "Central stock register and availability"],
     ["add-stock.html", "IN", "Add Stocks", "Record stock-in transactions"],
     ["draw-stock.html", "OUT", "Draw Stocks", "Process stock-out transactions"],
@@ -2596,7 +2640,7 @@ function initAuthChrome(currentUser) {
       return;
     }
 
-    if (["add-stock", "create-stock", "draw-stock", "relocate-stock", "activity-history", "manage-users", "master-control"].includes(document.body.dataset.page)) {
+    if (["reports", "add-stock", "create-stock", "draw-stock", "relocate-stock", "activity-history", "manage-users", "master-control"].includes(document.body.dataset.page)) {
       topbarActions.querySelector("#inventory-export-button")?.remove();
       topbarActions.querySelector(".inventory-menu-button")?.remove();
 
@@ -2679,6 +2723,1499 @@ function applyRoleNavigation(currentUser) {
   }
 }
 
+function getDashboardDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function isWithinRecentDays(value, days) {
+  const date = getDashboardDate(value);
+  if (!date) return false;
+  return Date.now() - date.getTime() <= days * 24 * 60 * 60 * 1000;
+}
+
+function formatDashboardDate(value) {
+  const date = getDashboardDate(value);
+  if (!date) return "-";
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function renderDashboardMetric(label, value, detail, tone = "neutral") {
+  return `
+    <article class="dashboard-metric dashboard-metric-${escapeHtml(tone)}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      <small>${escapeHtml(detail)}</small>
+    </article>
+  `;
+}
+
+function getDashboardAttentionItems(data) {
+  return data.inventory
+    .map((item) => {
+      const status = getInventoryStatus(item);
+      const restockQuantity = getConsignmentUsed(item);
+      const tags = [];
+      if (status.key === "out") tags.push({ label: "Out", tone: "danger" });
+      if (status.key === "low") tags.push({ label: "Low", tone: "warning" });
+      if (restockQuantity > 0) tags.push({ label: `${restockQuantity} restock`, tone: "consign" });
+      return {
+        item,
+        status,
+        restockQuantity,
+        tags,
+        priority: (status.key === "out" ? 100 : 0) + (restockQuantity > 0 ? 50 : 0) + (status.key === "low" ? 25 : 0)
+      };
+    })
+    .filter((entry) => entry.tags.length)
+    .sort((a, b) => b.priority - a.priority || Number(a.item.quantity ?? 0) - Number(b.item.quantity ?? 0));
+}
+
+function renderDashboardAttentionList(entries) {
+  if (!entries.length) {
+    return `<div class="dashboard-empty">No low stock, out-of-stock, or consignment restock items right now.</div>`;
+  }
+
+  return entries.slice(0, 6).map(({ item, tags }) => `
+    <a class="dashboard-list-row" href="inventory.html#inventory-register-card">
+      <span class="dashboard-list-main">
+        <strong>${escapeHtml(item.name ?? item.sku ?? "Inventory item")}</strong>
+        <small>${escapeHtml(item.sku ?? "-")} | ${escapeHtml(item.location ?? "Main Store")}</small>
+      </span>
+      <span class="dashboard-list-side">
+        <strong>${escapeHtml(String(item.quantity ?? 0))}</strong>
+        <span>${escapeHtml(formatUnitDisplay(item.unit ?? "units"))}</span>
+      </span>
+      <span class="dashboard-alert-tags">
+        ${tags.map((tag) => `<span class="dashboard-alert-tag dashboard-alert-tag-${escapeHtml(tag.tone)}">${escapeHtml(tag.label)}</span>`).join("")}
+      </span>
+    </a>
+  `).join("");
+}
+
+const DASHBOARD_USAGE_WINDOWS = [
+  { key: "30d", label: "Last 30 days", shortLabel: "30 days", days: 30 },
+  { key: "6m", label: "Last 6 months", shortLabel: "6 months", days: 183 },
+  { key: "1y", label: "Last 1 year", shortLabel: "1 year", days: 365 }
+];
+
+function getDashboardTopIssuedItems(data, days = 30) {
+  const totals = new Map();
+  data.stockOuts
+    .filter((record) => isWithinRecentDays(record.createdAt, days))
+    .forEach((record) => {
+      normalizeStockOutItems(record, data.inventory).forEach((line) => {
+        const snapshot = line.itemSnapshot ?? {};
+        const key = line.itemId || snapshot.sku || snapshot.name || "tracked-item";
+        const current = totals.get(key) ?? {
+          name: snapshot.name ?? "Inventory item",
+          sku: snapshot.sku ?? "-",
+          quantity: 0
+        };
+        current.quantity += Number(line.quantity || 0);
+        totals.set(key, current);
+      });
+
+      normalizeStockOutManualItems(record).forEach((line) => {
+        const key = `manual-${line.description ?? line.stockCode ?? "item"}`;
+        const current = totals.get(key) ?? {
+          name: line.description ?? "Additional handover item",
+          sku: line.stockCode || "Not tracked",
+          quantity: 0
+        };
+        current.quantity += Number(line.quantity || 0);
+        totals.set(key, current);
+      });
+    });
+
+  return Array.from(totals.values())
+    .filter((entry) => entry.quantity > 0)
+    .sort((a, b) => b.quantity - a.quantity)
+    .slice(0, 5);
+}
+
+function renderDashboardTopIssuedList(items, label = "selected period") {
+  if (!items.length) {
+    return `<div class="dashboard-empty">No stock-out movement in ${escapeHtml(label.toLowerCase())}.</div>`;
+  }
+
+  return items.map((item, index) => `
+    <div class="dashboard-rank-row">
+      <span class="dashboard-rank-number">${index + 1}</span>
+      <span>
+        <strong>${escapeHtml(item.name)}</strong>
+        <small>${escapeHtml(item.sku)}</small>
+      </span>
+      <strong>${escapeHtml(String(item.quantity))}</strong>
+    </div>
+  `).join("");
+}
+
+function renderDashboardActivityList(events) {
+  if (!events.length) {
+    return `<div class="dashboard-empty">No activity has been recorded yet.</div>`;
+  }
+
+  return events.slice(0, 6).map((event) => `
+    <a class="dashboard-activity-row" href="activity-detail.html?type=${encodeURIComponent(event.type)}&id=${encodeURIComponent(event.sourceId)}">
+      <span class="activity-tag activity-tag-${escapeHtml(event.type)}">${escapeHtml(event.title)}</span>
+      <span class="dashboard-activity-copy">
+        <strong>${escapeHtml(event.itemSummary || "Inventory activity")}</strong>
+        <small>${escapeHtml(event.actor)} | ${escapeHtml(formatDashboardDate(event.createdAt))}</small>
+      </span>
+    </a>
+  `).join("");
+}
+
+function bindDashboardUsageWindowControls(container) {
+  const buttons = container.querySelectorAll("[data-dashboard-usage-window]");
+  const lists = container.querySelectorAll("[data-dashboard-usage-list]");
+  if (!buttons.length || !lists.length) return;
+
+  buttons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const activeKey = button.dataset.dashboardUsageWindow;
+      buttons.forEach((control) => {
+        const isActive = control.dataset.dashboardUsageWindow === activeKey;
+        control.classList.toggle("is-active", isActive);
+        control.setAttribute("aria-pressed", String(isActive));
+      });
+      lists.forEach((list) => {
+        list.hidden = list.dataset.dashboardUsageList !== activeKey;
+      });
+    });
+  });
+}
+
+function renderDashboardOverviewContent(data) {
+  const inventory = data.inventory ?? [];
+  const totalQuantity = inventory.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  const lowStockItems = inventory.filter((item) => getInventoryStatus(item).key === "low");
+  const outStockItems = inventory.filter((item) => getInventoryStatus(item).key === "out");
+  const consignmentRestockItems = inventory.filter((item) => getConsignmentUsed(item) > 0);
+  const recentEvents = getActivityEvents(data);
+  const recentStockOutCount = (data.stockOuts ?? []).filter((record) => isWithinRecentDays(record.createdAt, 30)).length;
+  const recentCorrectionCount = (data.corrections ?? []).filter((record) => isWithinRecentDays(record.createdAt, 30)).length;
+  const attentionItems = getDashboardAttentionItems(data);
+  const topIssuedByWindow = DASHBOARD_USAGE_WINDOWS.map((window) => ({
+    ...window,
+    items: getDashboardTopIssuedItems(data, window.days)
+  }));
+  const defaultUsageWindow = topIssuedByWindow[0];
+
+  return `
+    ${data.loadError ? `<div class="dashboard-warning">${escapeHtml(data.loadError)}</div>` : ""}
+    <section class="dashboard-metrics" aria-label="Inventory overview">
+      ${renderDashboardMetric("Items", String(inventory.length), `${totalQuantity} total units`, "neutral")}
+      ${renderDashboardMetric("Low Stock", String(lowStockItems.length), "At or below reorder level", lowStockItems.length ? "warning" : "success")}
+      ${renderDashboardMetric("Out of Stock", String(outStockItems.length), "Unavailable items", outStockItems.length ? "danger" : "success")}
+      ${renderDashboardMetric("Consignment", String(consignmentRestockItems.length), "Items needing restock", consignmentRestockItems.length ? "consign" : "success")}
+      ${renderDashboardMetric("30-Day Issues", String(recentStockOutCount), `${recentCorrectionCount} correction${recentCorrectionCount === 1 ? "" : "s"}`, "neutral")}
+    </section>
+
+    <section class="dashboard-grid">
+      <article class="dashboard-panel dashboard-panel-attention">
+        <div class="dashboard-panel-header">
+          <div>
+            <p class="eyebrow">Attention</p>
+            <h2>Stock to review</h2>
+            <span class="dashboard-panel-meta">${attentionItems.length} item${attentionItems.length === 1 ? "" : "s"} require attention</span>
+          </div>
+          <a class="button-link button-link-ghost" href="inventory.html#inventory-register-card">Open Stock</a>
+        </div>
+        <div class="dashboard-list">
+          ${renderDashboardAttentionList(attentionItems)}
+        </div>
+      </article>
+
+      <article class="dashboard-panel">
+        <div class="dashboard-panel-header">
+          <div>
+            <p class="eyebrow">Recent</p>
+            <h2>Latest activity</h2>
+            <span class="dashboard-panel-meta">Latest audit records across stock workflows</span>
+          </div>
+          <a class="button-link button-link-ghost" href="activity-history.html">View All</a>
+        </div>
+        <div class="dashboard-activity-list">
+          ${renderDashboardActivityList(recentEvents)}
+        </div>
+      </article>
+
+      <article class="dashboard-panel">
+        <div class="dashboard-panel-header">
+          <div>
+            <p class="eyebrow">Usage</p>
+            <h2>Top issued items</h2>
+            <span class="dashboard-panel-meta">${defaultUsageWindow.items.length ? "Highest movement by issued quantity" : "No movement recorded yet"}</span>
+          </div>
+        </div>
+        <div class="dashboard-period-toggle" aria-label="Usage period">
+          ${topIssuedByWindow.map((window, index) => `
+            <button
+              type="button"
+              class="dashboard-period-button${index === 0 ? " is-active" : ""}"
+              data-dashboard-usage-window="${escapeHtml(window.key)}"
+              aria-pressed="${index === 0 ? "true" : "false"}"
+              title="${escapeHtml(window.label)}"
+            >${escapeHtml(window.shortLabel)}</button>
+          `).join("")}
+        </div>
+        ${topIssuedByWindow.map((window, index) => `
+          <div class="dashboard-rank-list" data-dashboard-usage-list="${escapeHtml(window.key)}"${index === 0 ? "" : " hidden"}>
+            ${renderDashboardTopIssuedList(window.items, window.label)}
+          </div>
+        `).join("")}
+      </article>
+    </section>
+  `;
+}
+
+function renderDashboardPage(currentUser) {
+  const dashboard = document.querySelector("#home-dashboard");
+  if (!dashboard || !currentUser) return;
+
+  dashboard.innerHTML = renderDashboardOverviewContent(loadData());
+  bindDashboardUsageWindowControls(dashboard);
+}
+
+const REPORT_DEFINITIONS = [
+  {
+    key: "low-stock",
+    label: "Low Stock",
+    group: "stock",
+    description: "Items at or below reorder level",
+    columns: ["Brand", "Category", "Description", "Stock Code", "LC Stock", "Consignment", "Total", "Unit", "Condition", "Status", "Location", "Reorder"]
+  },
+  {
+    key: "consignment-restock",
+    label: "Consignment Restock",
+    group: "consignment",
+    description: "Consignment items needing replenishment",
+    columns: ["Item", "Stock Code", "Location", "Current", "Restock"]
+  },
+  {
+    key: "consignment-ledger",
+    label: "Consignment Ledger",
+    group: "consignment",
+    description: "Detailed consignment usage and restock records for supplier cross-checking",
+    columns: ["Date", "Month", "Movement", "Item", "Stock Code", "Qty", "Reference", "Handled By", "Balance After"]
+  },
+  {
+    key: "monthly-consignment",
+    label: "Monthly Consignment",
+    group: "consignment",
+    description: "Monthly consignment used and restocked by item",
+    columns: ["Month", "Item", "Stock Code", "Used Qty", "Restocked Qty", "Net Used", "Handover Refs", "Restock Refs"]
+  },
+  {
+    key: "monthly-stock-out",
+    label: "Monthly Issues",
+    group: "movement",
+    description: "Monthly stock-out quantity summary",
+    columns: ["Month", "Forms", "Total Qty", "LC Stock", "Consignment"]
+  },
+  {
+    key: "item-usage",
+    label: "Item Usage",
+    group: "movement",
+    description: "Track issued quantity for one item by month or year and project",
+    columns: ["Period", "Total Issued", "LC Stock", "Consignment", "Forms", "Projects"]
+  },
+  {
+    key: "recent-movements",
+    label: "Recent Movements",
+    group: "movement",
+    description: "Latest stock-in, stock-out, and relocation records",
+    columns: ["Date", "Activity", "Item", "Qty", "Reference"]
+  }
+];
+
+const REPORT_GROUPS = [
+  { key: "stock", label: "Stock Health", description: "Availability and reorder reports" },
+  { key: "consignment", label: "Consignment", description: "Usage, restock, and payment checks" },
+  { key: "movement", label: "Movement", description: "Stock issue and audit summaries" }
+];
+
+function formatReportMonth(value) {
+  const date = getDashboardDate(value);
+  if (!date) return "-";
+  return date.toLocaleDateString(undefined, { month: "short", year: "numeric" });
+}
+
+function formatReportDate(value) {
+  const date = getDashboardDate(value);
+  if (!date) return "-";
+  return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function getReportMonthKey(value) {
+  const date = getDashboardDate(value);
+  if (!date) return "";
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
+function isWithinRecentMonths(value, months) {
+  const date = getDashboardDate(value);
+  if (!date) return false;
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - months);
+  return date >= cutoff;
+}
+
+function getConsignmentLedgerRows(data) {
+  const rows = [];
+
+  (data.stockOuts ?? []).forEach((record) => {
+    normalizeStockOutItems(record, data.inventory)
+      .filter((line) => Number(line.consignmentQuantity || 0) > 0)
+      .forEach((line) => {
+        const snapshot = line.itemSnapshot ?? {};
+        const item = data.inventory.find((record) => record.id === line.itemId)
+          ?? data.inventory.find((record) => record.sku && snapshot.sku && String(record.sku).toLowerCase() === String(snapshot.sku).toLowerCase())
+          ?? {};
+        const unit = snapshot.unit ?? item.unit ?? "-";
+        const balanceAfter = typeof line.balanceAfter === "object"
+          ? Number(line.balanceAfter?.consignmentQuantity ?? 0)
+          : Number(line.consignmentBalanceAfter ?? snapshot.consignmentQuantity ?? 0);
+        rows.push({
+          dateValue: record.createdAt,
+          date: formatReportDate(record.createdAt),
+          month: formatReportMonth(record.createdAt),
+          movement: "Used",
+          item: snapshot.name ?? "Inventory item",
+          sku: snapshot.sku ?? "-",
+          unit,
+          quantity: Number(line.consignmentQuantity || 0),
+          reference: {
+            label: record.documentNo || "View handover",
+            href: `handover.html?id=${encodeURIComponent(record.id)}`,
+            detail: [record.projectTitle, record.receivedBy ? `Received by ${record.receivedBy}` : ""].filter(Boolean).join(" | "),
+            text: [record.documentNo, record.projectTitle, record.receivedBy ? `Received by ${record.receivedBy}` : ""].filter(Boolean).join(" | ") || "-"
+          },
+          actor: record.createdByName ?? "Unknown User",
+          balanceAfter
+        });
+      });
+  });
+
+  (data.adjustments ?? [])
+    .filter((entry) => entry.stockType === "consignment" && Number(entry.quantity || 0) > 0)
+    .forEach((entry) => {
+      const item = data.inventory.find((record) => record.id === entry.itemId) ?? {};
+      const balanceAfter = typeof entry.balanceAfter === "object"
+        ? Number(entry.balanceAfter?.consignmentQuantity ?? 0)
+        : Number(item.consignmentQuantity ?? 0);
+      rows.push({
+        dateValue: entry.createdAt,
+        date: formatReportDate(entry.createdAt),
+        month: formatReportMonth(entry.createdAt),
+        movement: "Restocked",
+        item: item.name ?? "Deleted item",
+        sku: item.sku ?? "-",
+        unit: item.unit ?? "-",
+        quantity: Number(entry.quantity || 0),
+        reference: {
+          label: "Stock-in record",
+          href: entry.stockInSessionId ? `activity-detail.html?type=stock-in&id=${encodeURIComponent(entry.stockInSessionId)}` : "",
+          detail: entry.receivedQuantity ? `Received ${entry.receivedQuantity}` : "",
+          text: "Stock-in record"
+        },
+        actor: entry.actorName ?? "Unknown User",
+        balanceAfter
+      });
+    });
+
+  return rows.sort((a, b) => new Date(b.dateValue ?? 0) - new Date(a.dateValue ?? 0));
+}
+
+function getMonthlyConsignmentRows(data) {
+  const groups = new Map();
+
+  getConsignmentLedgerRows(data).forEach((row) => {
+    const monthKey = getReportMonthKey(row.dateValue);
+    if (!monthKey) return;
+    const key = `${monthKey}|${row.sku}|${row.item}`;
+    const current = groups.get(key) ?? {
+      monthKey,
+      month: formatReportMonth(monthKey),
+      item: row.item,
+      sku: row.sku,
+      unit: row.unit,
+      usedQuantity: 0,
+      restockedQuantity: 0,
+      handoverRefs: new Set(),
+      restockRefs: new Set()
+    };
+    if (row.movement === "Used") {
+      current.usedQuantity += Number(row.quantity || 0);
+      if (row.reference?.label && row.reference.label !== "-") current.handoverRefs.add(row.reference.label);
+    } else {
+      current.restockedQuantity += Number(row.quantity || 0);
+      if (row.reference?.label && row.reference.label !== "-") current.restockRefs.add(row.reference.label);
+    }
+    groups.set(key, current);
+  });
+
+  return Array.from(groups.values())
+    .map((row) => ({
+      ...row,
+      netUsed: Math.max(row.usedQuantity - row.restockedQuantity, 0),
+      handoverRefsText: Array.from(row.handoverRefs).join(", ") || "-",
+      restockRefsText: Array.from(row.restockRefs).join(", ") || "-"
+    }))
+    .sort((a, b) => String(b.monthKey).localeCompare(String(a.monthKey)) || String(a.item).localeCompare(String(b.item)));
+}
+
+function getMonthlyStockOutRows(data) {
+  const months = new Map();
+  (data.stockOuts ?? []).forEach((record) => {
+    const date = getDashboardDate(record.createdAt);
+    if (!date) return;
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-01`;
+    const current = months.get(key) ?? {
+      month: key,
+      stockOutCount: 0,
+      totalQuantity: 0,
+      ownQuantity: 0,
+      consignmentQuantity: 0
+    };
+    current.stockOutCount += 1;
+    normalizeStockOutItems(record, data.inventory).forEach((line) => {
+      current.totalQuantity += Number(line.quantity || 0);
+      current.ownQuantity += Number(line.ownQuantity || 0);
+      current.consignmentQuantity += Number(line.consignmentQuantity || 0);
+    });
+    normalizeStockOutManualItems(record).forEach((line) => {
+      current.totalQuantity += Number(line.quantity || 0);
+    });
+    months.set(key, current);
+  });
+  return Array.from(months.values()).sort((a, b) => String(b.month).localeCompare(String(a.month)));
+}
+
+function getRecentMovementRows(data) {
+  return getActivityEvents(data)
+    .slice(0, 50)
+    .map((event) => ({
+      date: formatReportDate(event.createdAt),
+      type: event.title,
+      item: event.itemSummary || "Inventory activity",
+      quantity: event.detailRows?.[0]?.value || event.quantityText || "-",
+      reference: event.detail || event.actor || "-"
+    }));
+}
+
+function matchesItemUsageLine(line, item) {
+  const snapshot = line.itemSnapshot ?? {};
+  if (line.itemId && item.id && line.itemId === item.id) return true;
+  return Boolean(item.sku && snapshot.sku && String(snapshot.sku).toLowerCase() === String(item.sku).toLowerCase());
+}
+
+function getItemUsageRows(data, item) {
+  if (!item) return [];
+
+  return (data.stockOuts ?? []).flatMap((record) => {
+    const stockOutDate = getDashboardDate(record.createdAt);
+    if (!stockOutDate) return [];
+
+    return normalizeStockOutItems(record, data.inventory)
+      .filter((line) => matchesItemUsageLine(line, item))
+      .map((line) => {
+        const snapshot = line.itemSnapshot ?? {};
+        return {
+          dateValue: record.createdAt,
+          date: formatReportDate(record.createdAt),
+          monthKey: getReportMonthKey(record.createdAt),
+          month: formatReportMonth(record.createdAt),
+          year: String(stockOutDate.getFullYear()),
+          documentNo: record.documentNo ?? "-",
+          projectTitle: record.projectTitle || "-",
+          receivedBy: record.receivedBy || "-",
+          unit: snapshot.unit ?? item.unit ?? "-",
+          quantity: Number(line.quantity || 0),
+          ownQuantity: Number(line.ownQuantity ?? line.quantity ?? 0),
+          consignmentQuantity: Number(line.consignmentQuantity || 0),
+          reference: {
+            label: record.documentNo || "View handover",
+            href: `handover.html?id=${encodeURIComponent(record.id)}`,
+            detail: [record.projectTitle, record.receivedBy ? `Received by ${record.receivedBy}` : ""].filter(Boolean).join(" | "),
+            text: [record.documentNo, record.projectTitle, record.receivedBy].filter(Boolean).join(" | ") || "-"
+          }
+        };
+      });
+  }).sort((a, b) => new Date(b.dateValue ?? 0) - new Date(a.dateValue ?? 0));
+}
+
+function getAllItemUsageRows(data) {
+  return (data.stockOuts ?? []).flatMap((record) => {
+    const stockOutDate = getDashboardDate(record.createdAt);
+    if (!stockOutDate) return [];
+
+    return normalizeStockOutItems(record, data.inventory)
+      .filter((line) => line.itemId || line.itemSnapshot?.sku || line.itemSnapshot?.name)
+      .map((line) => {
+        const snapshot = line.itemSnapshot ?? {};
+        const inventoryItem = data.inventory.find((item) => item.id === line.itemId)
+          ?? data.inventory.find((item) => item.sku && snapshot.sku && String(item.sku).toLowerCase() === String(snapshot.sku).toLowerCase())
+          ?? {};
+        const itemKey = line.itemId || snapshot.sku || snapshot.name || "tracked-item";
+        return {
+          itemKey,
+          itemId: line.itemId || inventoryItem.id || "",
+          itemName: snapshot.name ?? inventoryItem.name ?? "Inventory item",
+          sku: snapshot.sku ?? inventoryItem.sku ?? "-",
+          brand: snapshot.brand ?? inventoryItem.brand ?? "-",
+          model: snapshot.model ?? inventoryItem.model ?? "-",
+          unit: snapshot.unit ?? inventoryItem.unit ?? "-",
+          dateValue: record.createdAt,
+          date: formatReportDate(record.createdAt),
+          monthKey: getReportMonthKey(record.createdAt),
+          month: formatReportMonth(record.createdAt),
+          year: String(stockOutDate.getFullYear()),
+          documentNo: record.documentNo ?? "-",
+          projectTitle: record.projectTitle || "-",
+          receivedBy: record.receivedBy || "-",
+          quantity: Number(line.quantity || 0),
+          ownQuantity: Number(line.ownQuantity ?? line.quantity ?? 0),
+          consignmentQuantity: Number(line.consignmentQuantity || 0),
+          reference: {
+            label: record.documentNo || "View handover",
+            href: `handover.html?id=${encodeURIComponent(record.id)}`,
+            detail: [record.projectTitle, record.receivedBy ? `Received by ${record.receivedBy}` : ""].filter(Boolean).join(" | "),
+            text: [record.documentNo, record.projectTitle, record.receivedBy].filter(Boolean).join(" | ") || "-"
+          }
+        };
+      });
+  }).sort((a, b) => new Date(b.dateValue ?? 0) - new Date(a.dateValue ?? 0));
+}
+
+function getItemUsageOverviewRows(rows, sortMode = "issued") {
+  const groups = new Map();
+  rows.forEach((row) => {
+    const current = groups.get(row.itemKey) ?? {
+      itemKey: row.itemKey,
+      itemId: row.itemId,
+      itemName: row.itemName,
+      sku: row.sku,
+      brand: row.brand,
+      model: row.model,
+      unit: row.unit,
+      totalQuantity: 0,
+      ownQuantity: 0,
+      consignmentQuantity: 0,
+      forms: new Set(),
+      projects: new Set(),
+      lastDateValue: row.dateValue,
+      lastIssuedDate: row.date,
+      details: []
+    };
+    current.totalQuantity += Number(row.quantity || 0);
+    current.ownQuantity += Number(row.ownQuantity || 0);
+    current.consignmentQuantity += Number(row.consignmentQuantity || 0);
+    if (row.documentNo) current.forms.add(row.documentNo);
+    if (row.projectTitle && row.projectTitle !== "-") current.projects.add(row.projectTitle);
+    if (new Date(row.dateValue ?? 0) > new Date(current.lastDateValue ?? 0)) {
+      current.lastDateValue = row.dateValue;
+      current.lastIssuedDate = row.date;
+    }
+    current.details.push(row);
+    groups.set(row.itemKey, current);
+  });
+
+  const sorters = {
+    last: (a, b) => new Date(b.lastDateValue ?? 0) - new Date(a.lastDateValue ?? 0) || b.totalQuantity - a.totalQuantity,
+    projects: (a, b) => b.projects.size - a.projects.size || b.totalQuantity - a.totalQuantity,
+    forms: (a, b) => b.forms.size - a.forms.size || b.totalQuantity - a.totalQuantity,
+    name: (a, b) => String(a.itemName).localeCompare(String(b.itemName)),
+    issued: (a, b) => b.totalQuantity - a.totalQuantity || new Date(b.lastDateValue ?? 0) - new Date(a.lastDateValue ?? 0)
+  };
+
+  return Array.from(groups.values()).sort(sorters[sortMode] ?? sorters.issued);
+}
+
+function summarizeItemUsageRows(rows) {
+  const projects = new Set(rows.map((row) => row.projectTitle).filter((project) => project && project !== "-"));
+  return {
+    totalQuantity: rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0),
+    ownQuantity: rows.reduce((sum, row) => sum + Number(row.ownQuantity || 0), 0),
+    consignmentQuantity: rows.reduce((sum, row) => sum + Number(row.consignmentQuantity || 0), 0),
+    formCount: new Set(rows.map((row) => row.documentNo).filter(Boolean)).size,
+    projectCount: projects.size,
+    lastIssuedDate: rows[0]?.date ?? "-"
+  };
+}
+
+function getItemUsageGroupedRows(rows, groupMode) {
+  const groups = new Map();
+  rows.forEach((row) => {
+    const groupKey = groupMode === "year" ? row.year : row.monthKey;
+    const label = groupMode === "year" ? row.year : row.month;
+    if (!groupKey) return;
+    const current = groups.get(groupKey) ?? {
+      groupKey,
+      label,
+      totalQuantity: 0,
+      ownQuantity: 0,
+      consignmentQuantity: 0,
+      forms: new Set(),
+      projects: new Set(),
+      details: []
+    };
+    current.totalQuantity += Number(row.quantity || 0);
+    current.ownQuantity += Number(row.ownQuantity || 0);
+    current.consignmentQuantity += Number(row.consignmentQuantity || 0);
+    if (row.documentNo) current.forms.add(row.documentNo);
+    if (row.projectTitle && row.projectTitle !== "-") current.projects.add(row.projectTitle);
+    current.details.push(row);
+    groups.set(groupKey, current);
+  });
+
+  return Array.from(groups.values()).sort((a, b) => String(b.groupKey).localeCompare(String(a.groupKey)));
+}
+
+function getItemUsageReportState(data) {
+  const inventory = (data.inventory ?? [])
+    .slice()
+    .sort((a, b) => String(a.model ?? "").localeCompare(String(b.model ?? "")) || String(a.name ?? "").localeCompare(String(b.name ?? "")));
+  const storedItemId = localStorage.getItem("ims-item-usage-item-id") ?? "";
+  const selectedItem = inventory.find((item) => item.id === storedItemId) ?? inventory[0] ?? null;
+  const viewMode = localStorage.getItem("ims-item-usage-view") === "detail" ? "detail" : "overview";
+
+  const rawGroupMode = localStorage.getItem("ims-item-usage-group") ?? "month";
+  const groupMode = rawGroupMode === "year" ? "year" : "month";
+  const allRows = getAllItemUsageRows(data);
+  const rawRows = getItemUsageRows(data, selectedItem);
+  const years = Array.from(new Set(allRows.map((row) => row.year).filter(Boolean))).sort((a, b) => Number(b) - Number(a));
+  const selectedYear = localStorage.getItem("ims-item-usage-year") ?? "all";
+  const safeYear = selectedYear === "all" || years.includes(selectedYear) ? selectedYear : "all";
+  const projectSearch = localStorage.getItem("ims-item-usage-project-search") ?? "";
+  const itemSearch = localStorage.getItem("ims-item-usage-item-search") ?? "";
+  const sortMode = localStorage.getItem("ims-item-usage-sort") ?? "issued";
+  const normalizedProjectSearch = projectSearch.trim().toLowerCase();
+  const normalizedItemSearch = itemSearch.trim().toLowerCase();
+  const filteredAllRows = allRows.filter((row) => {
+    const matchesYear = safeYear === "all" || row.year === safeYear;
+    const matchesProject = !normalizedProjectSearch || [
+      row.projectTitle,
+      row.documentNo,
+      row.receivedBy
+    ].join(" ").toLowerCase().includes(normalizedProjectSearch);
+    const matchesItem = !normalizedItemSearch || [
+      row.itemName,
+      row.sku,
+      row.brand,
+      row.model
+    ].join(" ").toLowerCase().includes(normalizedItemSearch);
+    return matchesYear && matchesProject && matchesItem;
+  });
+  const filteredRows = rawRows.filter((row) => {
+    const matchesYear = safeYear === "all" || row.year === safeYear;
+    const matchesProject = !normalizedProjectSearch || [
+      row.projectTitle,
+      row.documentNo,
+      row.receivedBy
+    ].join(" ").toLowerCase().includes(normalizedProjectSearch);
+    return matchesYear && matchesProject;
+  });
+
+  return {
+    inventory,
+    selectedItem,
+    viewMode,
+    groupMode,
+    years,
+    selectedYear: safeYear,
+    projectSearch,
+    itemSearch,
+    sortMode,
+    allRows,
+    filteredAllRows,
+    overviewRows: getItemUsageOverviewRows(filteredAllRows, sortMode),
+    rawRows,
+    filteredRows,
+    groupedRows: getItemUsageGroupedRows(filteredRows, groupMode),
+    summary: summarizeItemUsageRows(filteredRows)
+  };
+}
+
+function getReportRows(data, reportKey) {
+  if (reportKey === "low-stock") {
+    return getVisibleInventoryItems(data.inventory)
+      .filter((item) => getInventoryStatus(item).key === "low" || getInventoryStatus(item).key === "out")
+      .sort((a, b) => Number(a.quantity || 0) - Number(b.quantity || 0))
+      .map((item) => {
+        const status = getInventoryStatus(item);
+        return {
+        sourceItem: item,
+        item: item.name ?? "-",
+        sku: item.sku ?? "-",
+        brand: item.brand ?? "Generic",
+        category: item.model ?? item.category ?? "Standard",
+        condition: formatStockConditionLabel(item.stockCondition),
+        status: status.label,
+        statusKey: status.key,
+        location: item.location ?? "-",
+        ownQuantity: Number(item.ownQuantity ?? item.quantity ?? 0),
+        consignmentQuantity: Number(item.consignmentQuantity ?? 0),
+        totalQuantity: Number(item.quantity ?? 0),
+        unit: formatUnitDisplay(item.unit),
+        reorder: Number(item.reorderLevel || 0)
+        };
+      });
+  }
+
+  if (reportKey === "consignment-restock") {
+    return getVisibleInventoryItems(data.inventory)
+      .map((item) => ({
+        item,
+        restockQuantity: getConsignmentUsed(item)
+      }))
+      .filter((entry) => entry.restockQuantity > 0)
+      .sort((a, b) => b.restockQuantity - a.restockQuantity)
+      .map(({ item, restockQuantity }) => ({
+        item: item.name ?? "-",
+        sku: item.sku ?? "-",
+        location: item.location ?? "-",
+        unit: item.unit ?? "-",
+        currentQuantity: Number(item.consignmentQuantity || 0),
+        restockQuantity,
+        current: `${Number(item.consignmentQuantity || 0)} ${formatUnitDisplay(item.unit)}`,
+        restock: `${restockQuantity} ${formatUnitDisplay(item.unit)}`
+      }));
+  }
+
+  if (reportKey === "consignment-ledger") {
+    return getConsignmentLedgerRows(data);
+  }
+
+  if (reportKey === "monthly-consignment") {
+    return getMonthlyConsignmentRows(data);
+  }
+
+  if (reportKey === "monthly-stock-out") {
+    return getMonthlyStockOutRows(data).map((row) => ({
+      month: formatReportMonth(row.month),
+      forms: row.stockOutCount,
+      totalQuantity: row.totalQuantity,
+      ownQuantity: row.ownQuantity,
+      consignmentQuantity: row.consignmentQuantity
+    }));
+  }
+
+  return getRecentMovementRows(data);
+}
+
+function getReportCellText(cell) {
+  if (cell && typeof cell === "object") {
+    return cell.text || [cell.label, cell.detail].filter(Boolean).join(" | ") || "-";
+  }
+  return cell;
+}
+
+function getReportSearchText(row, reportKey) {
+  return getReportCells(row, reportKey)
+    .map((cell) => String(getReportCellText(cell) ?? ""))
+    .join(" ")
+    .toLowerCase();
+}
+
+function renderReportPagination(currentPage, totalPages) {
+  if (totalPages <= 1) return "";
+  const pageButtons = [];
+  const pageWindow = 2;
+
+  for (let page = currentPage - pageWindow; page <= currentPage + pageWindow; page += 1) {
+    if (page > 1 && page < totalPages) pageButtons.push(page);
+  }
+
+  const uniquePages = [1, ...pageButtons, totalPages]
+    .filter((page, index, pages) => page >= 1 && page <= totalPages && pages.indexOf(page) === index)
+    .sort((a, b) => a - b);
+
+  const pageMarkup = uniquePages.map((page, index) => {
+    const previousPage = uniquePages[index - 1];
+    const ellipsis = previousPage && page - previousPage > 1
+      ? `<span class="pagination-ellipsis" aria-hidden="true">...</span>`
+      : "";
+    return `${ellipsis}<button class="pagination-button ${page === currentPage ? "is-active" : ""}" type="button" data-report-page="${page}">${page}</button>`;
+  }).join("");
+
+  return `
+    <div class="pagination-bar reports-pagination">
+      <div class="pagination-meta">Page ${currentPage} of ${totalPages}</div>
+      <div class="pagination-controls">
+        <button class="pagination-button" type="button" data-report-page="1" ${currentPage === 1 ? "disabled" : ""}>First</button>
+        <button class="pagination-button" type="button" data-report-page-nav="prev" ${currentPage === 1 ? "disabled" : ""}>Previous</button>
+        ${pageMarkup}
+        <button class="pagination-button" type="button" data-report-page-nav="next" ${currentPage === totalPages ? "disabled" : ""}>Next</button>
+        <button class="pagination-button" type="button" data-report-page="${totalPages}" ${currentPage === totalPages ? "disabled" : ""}>Last</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderReportCell(cell) {
+  if (cell && typeof cell === "object") {
+    const label = cell.label || cell.text || "-";
+    const detail = cell.detail ? `<small>${escapeHtml(cell.detail)}</small>` : "";
+    if (cell.href) {
+      return `
+        <a class="reports-reference-link" href="${escapeHtml(cell.href)}">
+          <span>${escapeHtml(label)}</span>
+          ${detail}
+        </a>
+      `;
+    }
+    return `<span class="reports-reference-link reports-reference-static"><span>${escapeHtml(label)}</span>${detail}</span>`;
+  }
+  return escapeHtml(cell);
+}
+
+function renderReportNavigation(activeReportKey) {
+  return REPORT_GROUPS.map((group) => {
+    const groupReports = REPORT_DEFINITIONS.filter((report) => report.group === group.key);
+    if (!groupReports.length) return "";
+    return `
+      <section class="reports-nav-group">
+        <div class="reports-nav-group-header">
+          <span>${escapeHtml(group.label)}</span>
+        </div>
+        <div class="reports-nav-list">
+          ${groupReports.map((report) => `
+            <button
+              class="reports-tab${report.key === activeReportKey ? " is-active" : ""}"
+              type="button"
+              data-report-view="${escapeHtml(report.key)}"
+              aria-pressed="${report.key === activeReportKey ? "true" : "false"}"
+            >
+              <span>${escapeHtml(report.label)}</span>
+            </button>
+          `).join("")}
+        </div>
+      </section>
+    `;
+  }).join("");
+}
+
+function getReportCells(row, reportKey) {
+  const cellMap = {
+    "low-stock": [row.brand, row.category, row.item, row.sku, row.ownQuantity, row.consignmentQuantity, row.totalQuantity, row.unit, row.condition, row.status, row.location, row.reorder],
+    "consignment-restock": [row.item, row.sku, row.location, row.current, row.restock],
+    "consignment-ledger": [row.date, row.month, row.movement, row.item, row.sku, row.quantity, row.reference, row.actor, row.balanceAfter],
+    "monthly-consignment": [row.month, row.item, row.sku, row.usedQuantity, row.restockedQuantity, row.netUsed, row.handoverRefsText, row.restockRefsText],
+    "monthly-stock-out": [row.month, row.forms, row.totalQuantity, row.ownQuantity, row.consignmentQuantity],
+    "recent-movements": [row.date, row.type, row.item, row.quantity, row.reference]
+  };
+  return cellMap[reportKey] ?? [];
+}
+
+function getReportCsvCells(row, reportKey) {
+  const unit = row.unit ?? "-";
+  const cellMap = {
+    "consignment-restock": [
+      row.item,
+      row.sku,
+      row.location,
+      row.currentQuantity !== undefined ? formatCsvQuantity(row.currentQuantity, unit) : row.current,
+      row.restockQuantity !== undefined ? formatCsvQuantity(row.restockQuantity, unit) : row.restock
+    ],
+    "consignment-ledger": [
+      row.date,
+      row.month,
+      row.movement,
+      row.item,
+      row.sku,
+      formatCsvQuantity(row.quantity, unit),
+      row.reference,
+      row.actor,
+      formatCsvQuantity(row.balanceAfter, unit)
+    ],
+    "monthly-consignment": [
+      row.month,
+      row.item,
+      row.sku,
+      formatCsvQuantity(row.usedQuantity, unit),
+      formatCsvQuantity(row.restockedQuantity, unit),
+      formatCsvQuantity(row.netUsed, unit),
+      row.handoverRefsText,
+      row.restockRefsText
+    ]
+  };
+  return cellMap[reportKey] ?? getReportCells(row, reportKey);
+}
+
+function downloadReportCsv(reportKey, rows) {
+  if (reportKey === "low-stock") {
+    const csv = buildInventoryCsv(rows.map((row) => row.sourceItem ?? {
+      brand: row.brand,
+      model: row.category,
+      name: row.item,
+      sku: row.sku,
+      quantity: row.totalQuantity,
+      unit: row.unit,
+      location: row.location
+    }));
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `low-stock-report-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.append(link);
+    link.click();
+    URL.revokeObjectURL(link.href);
+    link.remove();
+    return;
+  }
+
+  const definition = REPORT_DEFINITIONS.find((report) => report.key === reportKey) ?? REPORT_DEFINITIONS[0];
+  const csv = [
+    definition.columns.map(escapeCsvValue).join(","),
+    ...rows.map((row) => getReportCsvCells(row, reportKey).map((cell) => escapeCsvValue(getReportCellText(cell))).join(","))
+  ].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `${definition.key}-report-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.append(link);
+  link.click();
+  URL.revokeObjectURL(link.href);
+  link.remove();
+}
+
+function renderItemUsageReportContent(state) {
+  if (state.viewMode !== "detail") {
+    return renderItemUsageOverviewReportContent(state);
+  }
+
+  const selectedItem = state.selectedItem;
+  if (!selectedItem) {
+    return `<div class="dashboard-empty reports-item-usage-empty">No inventory items are available to track.</div>`;
+  }
+
+  const itemOptions = state.inventory.map((item) => `
+    <option value="${escapeHtml(item.id)}" ${item.id === selectedItem.id ? "selected" : ""}>
+      ${escapeHtml(getStockPickerDisplayName(item))} | ${escapeHtml(item.sku ?? "-")}
+    </option>
+  `).join("");
+  const yearOptions = [
+    `<option value="all" ${state.selectedYear === "all" ? "selected" : ""}>All years</option>`,
+    ...state.years.map((year) => `<option value="${escapeHtml(year)}" ${state.selectedYear === year ? "selected" : ""}>${escapeHtml(year)}</option>`)
+  ].join("");
+  const summary = state.summary;
+
+  return `
+    <div class="reports-item-usage">
+      <div class="reports-filter-bar reports-item-usage-controls">
+        <label class="reports-search-field">
+          <span>Inventory item</span>
+          <select id="item-usage-item-select">${itemOptions}</select>
+        </label>
+        <label class="reports-page-size">
+          <span>Group by</span>
+          <select id="item-usage-group-select">
+            <option value="month" ${state.groupMode === "month" ? "selected" : ""}>Monthly</option>
+            <option value="year" ${state.groupMode === "year" ? "selected" : ""}>Yearly</option>
+          </select>
+        </label>
+        <label class="reports-page-size">
+          <span>Year</span>
+          <select id="item-usage-year-select">${yearOptions}</select>
+        </label>
+        <label class="reports-search-field">
+          <span>Project</span>
+          <input id="item-usage-project-search" type="search" value="${escapeHtml(state.projectSearch)}" placeholder="Search project, document, receiver...">
+        </label>
+      </div>
+
+      <section class="reports-item-usage-card">
+        <div class="reports-item-usage-title">
+          <div>
+            <p class="eyebrow">Selected Item</p>
+            <h4>${escapeHtml(getStockPickerDisplayName(selectedItem))}</h4>
+            <span>${escapeHtml(selectedItem.sku ?? "-")} | ${escapeHtml(selectedItem.brand ?? "Generic")} | ${escapeHtml(selectedItem.model ?? "Standard")}</span>
+          </div>
+          <div class="reports-item-usage-title-actions">
+            <button class="button-link button-link-ghost" type="button" id="item-usage-overview-button">Overview</button>
+            <span class="reports-result-pill"><strong>${escapeHtml(String(state.filteredRows.length))}</strong><span>issue line${state.filteredRows.length === 1 ? "" : "s"}</span></span>
+          </div>
+        </div>
+        <div class="reports-item-usage-metrics">
+          ${renderDashboardMetric("Total Issued", String(summary.totalQuantity), `${summary.formCount} form${summary.formCount === 1 ? "" : "s"}`, "neutral")}
+          ${renderDashboardMetric("LC Stock", String(summary.ownQuantity), "Issued from LC balance", "neutral")}
+          ${renderDashboardMetric("Consignment", String(summary.consignmentQuantity), "Issued from consignment", summary.consignmentQuantity ? "consign" : "success")}
+          ${renderDashboardMetric("Projects", String(summary.projectCount), "Unique project titles", "neutral")}
+          ${renderDashboardMetric("Last Issued", summary.lastIssuedDate, "Most recent issue date", "neutral")}
+        </div>
+      </section>
+
+      <div class="reports-item-usage-groups">
+        ${state.groupedRows.length ? state.groupedRows.map((group) => renderItemUsageGroup(group)).join("") : `<div class="dashboard-empty">No issue records match this item and filter.</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function renderItemUsageOverviewReportContent(state) {
+  const yearOptions = [
+    `<option value="all" ${state.selectedYear === "all" ? "selected" : ""}>All years</option>`,
+    ...state.years.map((year) => `<option value="${escapeHtml(year)}" ${state.selectedYear === year ? "selected" : ""}>${escapeHtml(year)}</option>`)
+  ].join("");
+  const summary = summarizeItemUsageRows(state.filteredAllRows);
+
+  return `
+    <div class="reports-item-usage">
+      <div class="reports-filter-bar reports-item-usage-overview-controls">
+        <label class="reports-search-field">
+          <span>Item</span>
+          <input id="item-usage-item-search" type="search" value="${escapeHtml(state.itemSearch)}" placeholder="Search item, stock code, brand, category...">
+        </label>
+        <label class="reports-search-field">
+          <span>Project</span>
+          <input id="item-usage-project-search" type="search" value="${escapeHtml(state.projectSearch)}" placeholder="Search project, document, receiver...">
+        </label>
+        <label class="reports-page-size">
+          <span>Year</span>
+          <select id="item-usage-year-select">${yearOptions}</select>
+        </label>
+        <label class="reports-page-size">
+          <span>Sort</span>
+          <select id="item-usage-sort-select">
+            <option value="issued" ${state.sortMode === "issued" ? "selected" : ""}>Most issued</option>
+            <option value="last" ${state.sortMode === "last" ? "selected" : ""}>Last issued</option>
+            <option value="projects" ${state.sortMode === "projects" ? "selected" : ""}>Most projects</option>
+            <option value="forms" ${state.sortMode === "forms" ? "selected" : ""}>Most forms</option>
+            <option value="name" ${state.sortMode === "name" ? "selected" : ""}>Item name</option>
+          </select>
+        </label>
+      </div>
+
+      <section class="reports-item-usage-card">
+        <div class="reports-item-usage-title">
+          <div>
+            <p class="eyebrow">Usage Overview</p>
+            <h4>All issued inventory items</h4>
+            <span>Ranked by issued quantity, project spread, and latest movement.</span>
+          </div>
+          <span class="reports-result-pill"><strong>${escapeHtml(String(state.overviewRows.length))}</strong><span>item${state.overviewRows.length === 1 ? "" : "s"}</span></span>
+        </div>
+        <div class="reports-item-usage-metrics">
+          ${renderDashboardMetric("Total Issued", String(summary.totalQuantity), `${summary.formCount} form${summary.formCount === 1 ? "" : "s"}`, "neutral")}
+          ${renderDashboardMetric("LC Stock", String(summary.ownQuantity), "Issued from LC balance", "neutral")}
+          ${renderDashboardMetric("Consignment", String(summary.consignmentQuantity), "Issued from consignment", summary.consignmentQuantity ? "consign" : "success")}
+          ${renderDashboardMetric("Projects", String(summary.projectCount), "Unique project titles", "neutral")}
+          ${renderDashboardMetric("Last Issued", summary.lastIssuedDate, "Most recent issue date", "neutral")}
+        </div>
+      </section>
+
+      <div class="table-wrap elevated-table reports-table-wrap reports-item-usage-overview-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Stock Code</th>
+              <th>Total Issued</th>
+              <th>LC Stock</th>
+              <th>Consignment</th>
+              <th>Projects</th>
+              <th>Forms</th>
+              <th>Last Issued</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.overviewRows.length ? state.overviewRows.map((row) => renderItemUsageOverviewRow(row)).join("") : `<tr><td colspan="9"><div class="empty-state">No issued inventory items match this filter.</div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderItemUsageOverviewRow(row) {
+  const projects = Array.from(row.projects).join(", ") || "-";
+  return `
+    <tr>
+      <td>
+        <strong>${escapeHtml(row.itemName)}</strong>
+        <br><span class="muted">${escapeHtml(row.brand)} / ${escapeHtml(row.model)}</span>
+      </td>
+      <td>${escapeHtml(row.sku)}</td>
+      <td>${escapeHtml(String(row.totalQuantity))}</td>
+      <td>${escapeHtml(String(row.ownQuantity))}</td>
+      <td>${escapeHtml(String(row.consignmentQuantity))}</td>
+      <td title="${escapeHtml(projects)}">${escapeHtml(String(row.projects.size))}</td>
+      <td>${escapeHtml(String(row.forms.size))}</td>
+      <td>${escapeHtml(row.lastIssuedDate)}</td>
+      <td><button class="button-link button-link-ghost reports-item-usage-detail-button" type="button" data-item-usage-detail="${escapeHtml(row.itemId || row.itemKey)}">View Details</button></td>
+    </tr>
+  `;
+}
+
+function renderItemUsageGroup(group) {
+  const projects = Array.from(group.projects).join(", ") || "-";
+  return `
+    <details class="reports-item-usage-group" open>
+      <summary>
+        <span>
+          <strong>${escapeHtml(group.label)}</strong>
+          <small>${escapeHtml(projects)}</small>
+        </span>
+        <span class="reports-item-usage-group-metrics">
+          <span><strong>${escapeHtml(String(group.totalQuantity))}</strong> total</span>
+          <span><strong>${escapeHtml(String(group.ownQuantity))}</strong> LC</span>
+          <span><strong>${escapeHtml(String(group.consignmentQuantity))}</strong> consign</span>
+          <span><strong>${escapeHtml(String(group.forms.size))}</strong> forms</span>
+        </span>
+      </summary>
+      <div class="table-wrap elevated-table reports-table-wrap reports-item-usage-detail">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Document</th>
+              <th>Project</th>
+              <th>Received By</th>
+              <th>Total Qty</th>
+              <th>LC Stock</th>
+              <th>Consignment</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${group.details.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.date)}</td>
+                <td>${renderReportCell(row.reference)}</td>
+                <td>${escapeHtml(row.projectTitle)}</td>
+                <td>${escapeHtml(row.receivedBy)}</td>
+                <td>${escapeHtml(String(row.quantity))}</td>
+                <td>${escapeHtml(String(row.ownQuantity))}</td>
+                <td>${escapeHtml(String(row.consignmentQuantity))}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  `;
+}
+
+function getItemUsageCsvRows(state) {
+  return state.filteredRows.map((row) => ({
+    item: getStockPickerDisplayName(state.selectedItem),
+    sku: state.selectedItem?.sku ?? "-",
+    date: row.date,
+    month: row.month,
+    year: row.year,
+    documentNo: row.documentNo,
+    projectTitle: row.projectTitle,
+    receivedBy: row.receivedBy,
+    unit: row.unit ?? state.selectedItem?.unit ?? "-",
+    quantity: row.quantity,
+    ownQuantity: row.ownQuantity,
+    consignmentQuantity: row.consignmentQuantity
+  }));
+}
+
+function downloadItemUsageCsv(state) {
+  const headers = ["Item", "Stock Code", "Date", "Month", "Year", "Document", "Project", "Received By", "Total Qty", "LC Stock", "Consignment"];
+  const csv = [
+    headers.map(escapeCsvValue).join(","),
+    ...getItemUsageCsvRows(state).map((row) => [
+      row.item,
+      row.sku,
+      row.date,
+      row.month,
+      row.year,
+      row.documentNo,
+      row.projectTitle,
+      row.receivedBy,
+      formatCsvQuantity(row.quantity, row.unit),
+      formatCsvQuantity(row.ownQuantity, row.unit),
+      formatCsvQuantity(row.consignmentQuantity, row.unit)
+    ].map(escapeCsvValue).join(","))
+  ].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const link = document.createElement("a");
+  const sku = String(state.selectedItem?.sku ?? "item").replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "") || "item";
+  link.href = URL.createObjectURL(blob);
+  link.download = `item-usage-${sku}-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.append(link);
+  link.click();
+  URL.revokeObjectURL(link.href);
+  link.remove();
+}
+
+function downloadItemUsageOverviewCsv(state) {
+  const headers = ["Item", "Stock Code", "Brand", "Category", "Total Issued", "LC Stock", "Consignment", "Projects", "Forms", "Last Issued"];
+  const csv = [
+    headers.map(escapeCsvValue).join(","),
+    ...state.overviewRows.map((row) => [
+      row.itemName,
+      row.sku,
+      row.brand,
+      row.model,
+      formatCsvQuantity(row.totalQuantity, row.unit),
+      formatCsvQuantity(row.ownQuantity, row.unit),
+      formatCsvQuantity(row.consignmentQuantity, row.unit),
+      row.projects.size,
+      row.forms.size,
+      row.lastIssuedDate
+    ].map(escapeCsvValue).join(","))
+  ].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `item-usage-overview-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.append(link);
+  link.click();
+  URL.revokeObjectURL(link.href);
+  link.remove();
+}
+
+function renderReportsPage() {
+  const container = document.querySelector("#reports-workspace");
+  if (!container) return;
+
+  const data = loadData();
+  const selectedReport = localStorage.getItem("ims-report-view") || "low-stock";
+  const activeDefinition = REPORT_DEFINITIONS.find((report) => report.key === selectedReport) ?? REPORT_DEFINITIONS[0];
+  const activeGroup = REPORT_GROUPS.find((group) => group.key === activeDefinition.group);
+  const isItemUsageReport = activeDefinition.key === "item-usage";
+  const itemUsageState = isItemUsageReport ? getItemUsageReportState(data) : null;
+  const rows = isItemUsageReport ? [] : getReportRows(data, activeDefinition.key);
+  const searchKey = `ims-report-search-${activeDefinition.key}`;
+  const pageKey = `ims-report-page-${activeDefinition.key}`;
+  const pageSizeKey = `ims-report-page-size-${activeDefinition.key}`;
+  const lowStockStatusKey = "ims-report-low-stock-status";
+  const selectedLowStockStatus = ["all", "low", "out"].includes(localStorage.getItem(lowStockStatusKey))
+    ? localStorage.getItem(lowStockStatusKey)
+    : "all";
+  const rawSearch = localStorage.getItem(searchKey) ?? "";
+  const searchTerm = rawSearch.trim().toLowerCase();
+  const selectedPageSize = Number(localStorage.getItem(pageSizeKey) ?? "10");
+  const pageSize = [10, 25, 50, 100].includes(selectedPageSize) ? selectedPageSize : 10;
+  const statusFilteredRows = activeDefinition.key === "low-stock" && selectedLowStockStatus !== "all"
+    ? rows.filter((row) => row.statusKey === selectedLowStockStatus)
+    : rows;
+  const filteredRows = searchTerm
+    ? statusFilteredRows.filter((row) => getReportSearchText(row, activeDefinition.key).includes(searchTerm))
+    : statusFilteredRows;
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const currentPage = Math.min(Math.max(Number(localStorage.getItem(pageKey) || "1"), 1), totalPages);
+  const startIndex = (currentPage - 1) * pageSize;
+  const visibleRows = filteredRows.slice(startIndex, startIndex + pageSize);
+  if (String(currentPage) !== localStorage.getItem(pageKey)) {
+    localStorage.setItem(pageKey, String(currentPage));
+  }
+  const reportRowCount = isItemUsageReport
+    ? itemUsageState.viewMode === "detail"
+      ? itemUsageState.filteredRows.length
+      : itemUsageState.overviewRows.length
+    : filteredRows.length;
+  const reportBodyMarkup = isItemUsageReport
+    ? renderItemUsageReportContent(itemUsageState)
+    : `
+      <div class="reports-filter-bar${activeDefinition.key === "low-stock" ? " reports-filter-bar-low-stock" : ""}">
+        <label class="reports-search-field">
+          <span>Search report</span>
+          <input id="reports-search-input" type="search" value="${escapeHtml(rawSearch)}" placeholder="Search item, stock code, location, reference, user...">
+        </label>
+        ${activeDefinition.key === "low-stock" ? `
+          <label class="reports-page-size">
+            <span>Status</span>
+            <select id="reports-low-stock-status">
+              <option value="all" ${selectedLowStockStatus === "all" ? "selected" : ""}>Low & Out</option>
+              <option value="low" ${selectedLowStockStatus === "low" ? "selected" : ""}>Low Stock</option>
+              <option value="out" ${selectedLowStockStatus === "out" ? "selected" : ""}>Out of Stock</option>
+            </select>
+          </label>
+        ` : ""}
+        <label class="reports-page-size">
+          <span>Rows</span>
+          <select id="reports-page-size">
+            ${[10, 25, 50, 100].map((size) => `<option value="${size}" ${size === pageSize ? "selected" : ""}>${size}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+      <div class="table-wrap elevated-table reports-table-wrap">
+        <table>
+          <thead>
+            <tr>${activeDefinition.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr>
+          </thead>
+          <tbody>
+            ${visibleRows.length ? visibleRows.map((row) => `
+              <tr>${getReportCells(row, activeDefinition.key).map((cell) => `<td>${renderReportCell(cell)}</td>`).join("")}</tr>
+            `).join("") : `<tr><td colspan="${activeDefinition.columns.length}"><div class="empty-state">${searchTerm ? "No rows match this search." : "No rows available for this report."}</div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      ${renderReportPagination(currentPage, totalPages)}
+    `;
+  container.innerHTML = `
+    <section class="reports-panel" aria-label="Report center">
+      <div class="reports-layout">
+        <nav class="reports-tabs" role="tablist" aria-label="Reports">
+          ${renderReportNavigation(activeDefinition.key)}
+        </nav>
+
+        <div class="reports-content">
+          <div class="reports-content-header">
+            <div>
+              <span>${escapeHtml(activeGroup?.label ?? "Reports")}</span>
+              <strong>${escapeHtml(activeDefinition.label)}</strong>
+              <small>${escapeHtml(activeDefinition.description)}</small>
+            </div>
+            <div class="reports-result-pill">
+              <strong>${escapeHtml(String(reportRowCount))}</strong>
+              <span>row${reportRowCount === 1 ? "" : "s"}</span>
+            </div>
+            <div class="reports-content-actions">
+              <button class="button-link button-link-ghost" type="button" id="reports-export-csv">${activeDefinition.key === "low-stock" ? "Export Excel" : "Export CSV"}</button>
+            </div>
+          </div>
+          ${reportBodyMarkup}
+        </div>
+      </div>
+    </section>
+  `;
+
+  container.querySelectorAll("[data-report-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      localStorage.setItem("ims-report-view", button.dataset.reportView);
+      renderReportsPage();
+    });
+  });
+
+  const searchInput = container.querySelector("#reports-search-input");
+  searchInput?.addEventListener("input", () => {
+    const selectionStart = searchInput.selectionStart;
+    localStorage.setItem(searchKey, searchInput.value);
+    localStorage.setItem(pageKey, "1");
+    renderReportsPage();
+    const nextSearchInput = document.querySelector("#reports-search-input");
+    nextSearchInput?.focus();
+    if (selectionStart !== null) {
+      nextSearchInput?.setSelectionRange(selectionStart, selectionStart);
+    }
+  });
+
+  const pageSizeSelect = container.querySelector("#reports-page-size");
+  pageSizeSelect?.addEventListener("change", () => {
+    localStorage.setItem(pageSizeKey, pageSizeSelect.value);
+    localStorage.setItem(pageKey, "1");
+    renderReportsPage();
+  });
+
+  const lowStockStatusSelect = container.querySelector("#reports-low-stock-status");
+  lowStockStatusSelect?.addEventListener("change", () => {
+    localStorage.setItem(lowStockStatusKey, lowStockStatusSelect.value);
+    localStorage.setItem(pageKey, "1");
+    renderReportsPage();
+  });
+
+  container.querySelectorAll("[data-report-page]").forEach((button) => {
+    button.addEventListener("click", () => {
+      localStorage.setItem(pageKey, button.dataset.reportPage);
+      renderReportsPage();
+    });
+  });
+
+  container.querySelectorAll("[data-report-page-nav]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextPage = button.dataset.reportPageNav === "prev" ? currentPage - 1 : currentPage + 1;
+      localStorage.setItem(pageKey, String(Math.min(Math.max(nextPage, 1), totalPages)));
+      renderReportsPage();
+    });
+  });
+
+  container.querySelector("#reports-export-csv")?.addEventListener("click", async () => {
+    if (isItemUsageReport) {
+      if (itemUsageState.viewMode === "detail") {
+        downloadItemUsageCsv(itemUsageState);
+      } else {
+        downloadItemUsageOverviewCsv(itemUsageState);
+      }
+      return;
+    }
+    if (activeDefinition.key === "low-stock") {
+      const lowStockItems = filteredRows.map((row) => row.sourceItem).filter(Boolean);
+      await downloadInventoryExcel(lowStockItems, "low-stock-report");
+      return;
+    }
+    downloadReportCsv(activeDefinition.key, filteredRows);
+  });
+
+  const itemUsageItemSelect = container.querySelector("#item-usage-item-select");
+  itemUsageItemSelect?.addEventListener("change", () => {
+    localStorage.setItem("ims-item-usage-item-id", itemUsageItemSelect.value);
+    localStorage.setItem("ims-item-usage-year", "all");
+    localStorage.setItem("ims-item-usage-view", "detail");
+    renderReportsPage();
+  });
+
+  const itemUsageGroupSelect = container.querySelector("#item-usage-group-select");
+  itemUsageGroupSelect?.addEventListener("change", () => {
+    localStorage.setItem("ims-item-usage-group", itemUsageGroupSelect.value);
+    renderReportsPage();
+  });
+
+  const itemUsageYearSelect = container.querySelector("#item-usage-year-select");
+  itemUsageYearSelect?.addEventListener("change", () => {
+    localStorage.setItem("ims-item-usage-year", itemUsageYearSelect.value);
+    renderReportsPage();
+  });
+
+  const itemUsageProjectSearch = container.querySelector("#item-usage-project-search");
+  itemUsageProjectSearch?.addEventListener("input", () => {
+    const selectionStart = itemUsageProjectSearch.selectionStart;
+    localStorage.setItem("ims-item-usage-project-search", itemUsageProjectSearch.value);
+    renderReportsPage();
+    const nextSearchInput = document.querySelector("#item-usage-project-search");
+    nextSearchInput?.focus();
+    if (selectionStart !== null) {
+      nextSearchInput?.setSelectionRange(selectionStart, selectionStart);
+    }
+  });
+
+  const itemUsageItemSearch = container.querySelector("#item-usage-item-search");
+  itemUsageItemSearch?.addEventListener("input", () => {
+    const selectionStart = itemUsageItemSearch.selectionStart;
+    localStorage.setItem("ims-item-usage-item-search", itemUsageItemSearch.value);
+    renderReportsPage();
+    const nextSearchInput = document.querySelector("#item-usage-item-search");
+    nextSearchInput?.focus();
+    if (selectionStart !== null) {
+      nextSearchInput?.setSelectionRange(selectionStart, selectionStart);
+    }
+  });
+
+  const itemUsageSortSelect = container.querySelector("#item-usage-sort-select");
+  itemUsageSortSelect?.addEventListener("change", () => {
+    localStorage.setItem("ims-item-usage-sort", itemUsageSortSelect.value);
+    renderReportsPage();
+  });
+
+  container.querySelector("#item-usage-overview-button")?.addEventListener("click", () => {
+    localStorage.setItem("ims-item-usage-view", "overview");
+    renderReportsPage();
+  });
+
+  container.querySelectorAll("[data-item-usage-detail]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const usageKey = button.dataset.itemUsageDetail;
+      const overviewRow = itemUsageState.overviewRows.find((row) => row.itemId === usageKey || row.itemKey === usageKey);
+      const item = overviewRow
+        ? itemUsageState.inventory.find((record) => record.id === overviewRow.itemId)
+          ?? itemUsageState.inventory.find((record) => record.sku && overviewRow.sku && String(record.sku).toLowerCase() === String(overviewRow.sku).toLowerCase())
+        : null;
+      if (item) localStorage.setItem("ims-item-usage-item-id", item.id);
+      localStorage.setItem("ims-item-usage-view", "detail");
+      localStorage.setItem("ims-item-usage-year", "all");
+      renderReportsPage();
+    });
+  });
+}
+
 function initHomePage(currentUser) {
   const actionGrid = document.querySelector("#home-action-grid");
   const homeTitle = document.querySelector("#home-title");
@@ -2688,7 +4225,9 @@ function initHomePage(currentUser) {
 
   actionGrid.hidden = false;
   homeTitle.textContent = "Choose an action";
-  homeCopy.textContent = `Signed in as ${getUserDisplayName(currentUser)}. Continue with the inventory task you need.`;
+  homeCopy.textContent = isMasterUser(currentUser)
+    ? `Signed in as ${getUserDisplayName(currentUser)}. Continue with a workflow or open Reports for stock insights.`
+    : `Signed in as ${getUserDisplayName(currentUser)}. Continue with the inventory workflow you need.`;
   homeSessionPanel.innerHTML = `
     <section class="auth-panel auth-panel-session">
       <div>
@@ -3132,6 +4671,7 @@ function getStockPickerSearchText(item) {
     item.sku,
     item.brand,
     item.model,
+    item.category,
     item.location,
     formatStockConditionLabel(item.stockCondition)
   ].map((value) => String(value ?? "").toLowerCase()).join(" ");
@@ -3142,15 +4682,85 @@ function getStockPickerDisplayName(item) {
   return normalizeStockConditions(item?.stockCondition).includes("used") ? `${name} - Used` : name;
 }
 
+function normalizeStockPickerTerm(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function getStockPickerTokens(searchTerm) {
+  return normalizeStockPickerTerm(searchTerm).split(/\s+/).filter(Boolean);
+}
+
+function getStockPickerRank(item, tokens) {
+  if (!tokens.length) return 0;
+
+  const fields = {
+    sku: normalizeStockPickerTerm(item.sku),
+    name: normalizeStockPickerTerm(getStockPickerDisplayName(item)),
+    model: normalizeStockPickerTerm(item.model ?? item.category),
+    brand: normalizeStockPickerTerm(item.brand),
+    location: normalizeStockPickerTerm(item.location),
+    condition: normalizeStockPickerTerm(formatStockConditionLabel(item.stockCondition))
+  };
+
+  return tokens.reduce((score, token) => {
+    if (fields.sku === token) return score + 120;
+    if (fields.sku.startsWith(token)) return score + 95;
+    if (fields.name.startsWith(token)) return score + 75;
+    if (fields.model.startsWith(token)) return score + 58;
+    if (fields.brand.startsWith(token)) return score + 46;
+    if (fields.sku.includes(token)) return score + 42;
+    if (fields.name.includes(token)) return score + 34;
+    if (fields.model.includes(token)) return score + 28;
+    if (fields.brand.includes(token)) return score + 22;
+    if (fields.location.includes(token)) return score + 14;
+    if (fields.condition.includes(token)) return score + 10;
+    return score;
+  }, 0);
+}
+
+function matchesStockPickerFilter(item, filter) {
+  const filterKey = String(filter ?? "all");
+  if (filterKey === "own") return Number(item.ownQuantity ?? item.quantity ?? 0) > 0;
+  if (filterKey === "consignment") return Number(item.consignmentQuantity ?? 0) > 0;
+  if (filterKey === "used") return normalizeStockConditions(item.stockCondition).includes("used");
+  return true;
+}
+
+function getActiveStockPickerFilter(filterButtons) {
+  return Array.from(filterButtons ?? []).find((button) => button.classList.contains("is-active"))?.dataset.stockPickerFilter ?? "all";
+}
+
+function bindStockPickerFilterButtons(filterButtons, onChange) {
+  filterButtons?.forEach((button) => {
+    button.addEventListener("click", () => {
+      filterButtons.forEach((control) => {
+        const isActive = control === button;
+        control.classList.toggle("is-active", isActive);
+        control.setAttribute("aria-pressed", String(isActive));
+      });
+      onChange?.();
+    });
+  });
+}
+
 function renderStockPickerList(container, inventory, selectedId, searchTerm = "", options = {}) {
   if (!container) return;
   const onlyInStock = options.onlyInStock !== false;
   const emptyMessage = options.emptyMessage ?? "No available stock matches your search.";
-  const normalizedSearch = searchTerm.trim().toLowerCase();
+  const includeHidden = options.includeHidden === true;
+  const tokens = getStockPickerTokens(searchTerm);
   const availableItems = inventory
+    .filter((item) => includeHidden || !isInventoryItemHidden(item))
     .filter((item) => !onlyInStock || item.quantity > 0)
-    .filter((item) => !normalizedSearch || getStockPickerSearchText(item).includes(normalizedSearch))
-    .sort((a, b) => String(a.model ?? "").localeCompare(String(b.model ?? "")) || String(a.name ?? "").localeCompare(String(b.name ?? "")));
+    .filter((item) => matchesStockPickerFilter(item, options.filter))
+    .filter((item) => {
+      if (!tokens.length) return true;
+      const searchText = getStockPickerSearchText(item);
+      return tokens.every((token) => searchText.includes(token));
+    })
+    .sort((a, b) => getStockPickerRank(b, tokens) - getStockPickerRank(a, tokens)
+      || String(a.model ?? "").localeCompare(String(b.model ?? ""))
+      || String(a.name ?? "").localeCompare(String(b.name ?? "")));
 
   if (!availableItems.length) {
     container.innerHTML = `<div class="stock-picker-empty">${escapeHtml(emptyMessage)}</div>`;
@@ -3173,13 +4783,24 @@ function renderStockPickerList(container, inventory, selectedId, searchTerm = ""
     const totalMetric = consignmentQuantity > 0
       ? `<span class="stock-picker-chip-total"><span class="stock-picker-chip-label">Total</span><strong>${Number(item.quantity ?? 0)}</strong></span>`
       : "";
+    const conditionLabel = formatStockConditionLabel(item.stockCondition);
+    const hiddenDetail = includeHidden && isInventoryItemHidden(item)
+      ? `<span>Hidden</span>`
+      : "";
 
     return `
       ${groupMarkup}
       <button type="button" class="stock-picker-option${item.id === selectedId ? " is-selected" : ""}" data-stock-picker-option="${item.id}" role="option" aria-selected="${item.id === selectedId ? "true" : "false"}">
         <span class="stock-picker-option-main">
           <strong>${escapeHtml(getStockPickerDisplayName(item))}</strong>
-          <span>${escapeHtml(item.brand ?? "Generic")} / ${escapeHtml(item.sku ?? "-")} / ${escapeHtml(item.location ?? "Main Store")}</span>
+          <span class="stock-picker-option-code">${escapeHtml(item.sku ?? "-")}</span>
+          <span class="stock-picker-option-details">
+            <span>${escapeHtml(item.brand ?? "Generic")}</span>
+            <span>${escapeHtml(item.model ?? item.category ?? "Standard")}</span>
+            <span>${escapeHtml(conditionLabel)}</span>
+            <span>${escapeHtml(item.location ?? "Main Store")}</span>
+            ${hiddenDetail}
+          </span>
         </span>
         <span class="stock-picker-option-metrics">
           <span class="stock-picker-chip-own"><span class="stock-picker-chip-label">LC Stock</span><strong>${ownQuantity}</strong></span>
@@ -4176,7 +5797,7 @@ async function applyActivityCorrection(type, id, form) {
       model: String(form.elements["correctCategory-0"]?.value ?? "").trim().replace(/\s+/g, " "),
       name: String(form.elements["correctName-0"]?.value ?? "").trim().replace(/\s+/g, " "),
       sku: String(form.elements["correctSku-0"]?.value ?? "").trim().replace(/\s+/g, " "),
-      unit: String(form.elements["correctUnit-0"]?.value ?? "").trim().replace(/\s+/g, " ").toUpperCase(),
+      unit: normalizeUnitInput(form.elements["correctUnit-0"]?.value),
       location: String(form.elements["correctLocation-0"]?.value ?? "").trim().replace(/\s+/g, " ")
     };
     if (Object.values(correctedValues).some((value) => !value)) {
@@ -4377,6 +5998,7 @@ function getValidFilterValue(currentValue, storedValue, values) {
 
 function renderInventoryPage() {
   const data = loadData();
+  const visibleInventory = getVisibleInventoryItems(data.inventory);
   const diagnostics = getStoredInventoryDiagnostics();
   const summary = document.querySelector("#inventory-summary");
   const tableBody = document.querySelector("#inventory-table");
@@ -4400,8 +6022,8 @@ function renderInventoryPage() {
   localStorage.removeItem("ims-inventory-location-filter");
   const rawSearch = localStorage.getItem(searchKey) ?? searchInput?.value ?? "";
   const searchTerm = rawSearch.trim().toLowerCase();
-  const brands = getUniqueInventoryValues(data.inventory, "brand");
-  const models = getUniqueInventoryValues(data.inventory, "model");
+  const brands = getUniqueInventoryValues(visibleInventory, "brand");
+  const models = getUniqueInventoryValues(visibleInventory, "model");
   const activeBrand = getValidFilterValue(brandFilter?.value, localStorage.getItem(brandKey), brands);
   const activeCategory = getValidFilterValue(modelFilter?.value, localStorage.getItem(modelKey), models);
   const rawConditionFilter = localStorage.getItem(conditionKey) ?? conditionFilter?.value ?? "all";
@@ -4410,8 +6032,8 @@ function renderInventoryPage() {
   const activeStatus = ["all", "low", "out"].includes(rawStatusFilter) ? rawStatusFilter : "all";
   const selectedPageSize = Number(localStorage.getItem(pageSizeKey) ?? pageSizeSelect?.value ?? String(INVENTORY_PAGE_SIZE));
   const pageSize = [8, 20, 50, 100].includes(selectedPageSize) ? selectedPageSize : INVENTORY_PAGE_SIZE;
-  const lowStockItems = data.inventory.filter((item) => getInventoryStatus(item).key === "low");
-  const outOfStockItems = data.inventory.filter((item) => item.quantity <= 0);
+  const lowStockItems = visibleInventory.filter((item) => getInventoryStatus(item).key === "low");
+  const outOfStockItems = visibleInventory.filter((item) => item.quantity <= 0);
 
   if (searchInput && searchInput.value !== rawSearch) {
     searchInput.value = rawSearch;
@@ -4440,7 +6062,7 @@ function renderInventoryPage() {
         ${renderInventoryKpiIcon("items")}
         <div>
           <span>Total Items</span>
-          <strong>${data.inventory.length}</strong>
+          <strong>${visibleInventory.length}</strong>
           <small>Active items</small>
         </div>
       </div>
@@ -4463,7 +6085,7 @@ function renderInventoryPage() {
     `;
   }
 
-  const filteredInventory = data.inventory.filter((item) => {
+  const filteredInventory = visibleInventory.filter((item) => {
     const matchesSearch = !searchTerm || [
       item.brand,
       item.model,
@@ -4997,7 +6619,7 @@ function initCreateStockPage() {
         model,
         name: String(form.get("name") ?? "").trim(),
         sku: String(form.get("sku") ?? "").trim(),
-        unit: String(form.get("unit") ?? "").trim().toUpperCase(),
+        unit: normalizeUnitInput(form.get("unit")),
         quantity,
         ownQuantity,
         consignmentQuantity,
@@ -5078,6 +6700,7 @@ function initMasterControlPage() {
   const stockPickerPopover = document.querySelector("#master-stock-picker-popover");
   const stockPickerSearch = document.querySelector("#master-stock-picker-search");
   const stockPickerList = document.querySelector("#master-stock-picker-list");
+  const stockPickerFilterButtons = document.querySelectorAll("[data-stock-picker-filter]");
   if (!content || !form || !itemSelect) return;
 
   const fields = {
@@ -5090,6 +6713,7 @@ function initMasterControlPage() {
     ownQuantity: form.elements.ownQuantity,
     consignmentQuantity: form.elements.consignmentQuantity,
     reorderLevel: form.elements.reorderLevel,
+    isHidden: document.querySelector("#master-is-hidden"),
     stockCondition: form.elements.stockCondition,
     reason: form.elements.reason
   };
@@ -5129,6 +6753,10 @@ function initMasterControlPage() {
           setCheckedFormValues(form, "stockCondition", ["new"]);
           return;
         }
+        if (key === "isHidden") {
+          field.checked = false;
+          return;
+        }
         if (field && key !== "reason") field.value = "";
       });
       updateStockPickerButton(stockPickerButton, null, { placeholderMeta: "Search by description, SKU, brand, category, or condition" });
@@ -5143,6 +6771,7 @@ function initMasterControlPage() {
     fields.ownQuantity.value = String(Number(item.ownQuantity ?? item.quantity ?? 0));
     fields.consignmentQuantity.value = String(Number(item.consignmentQuantity ?? 0));
     fields.reorderLevel.value = String(Number(item.reorderLevel ?? 0));
+    fields.isHidden.checked = isInventoryItemHidden(item);
     setCheckedFormValues(form, "stockCondition", item.stockCondition);
     updateStockPickerButton(stockPickerButton, item, { quantityLabel: "current" });
   };
@@ -5150,7 +6779,9 @@ function initMasterControlPage() {
   const renderPicker = () => {
     renderStockPickerList(stockPickerList, loadData().inventory, itemSelect.value, stockPickerSearch?.value ?? "", {
       onlyInStock: false,
-      emptyMessage: "No inventory items match your search."
+      emptyMessage: "No inventory items match your search.",
+      includeHidden: true,
+      filter: getActiveStockPickerFilter(stockPickerFilterButtons)
     });
   };
 
@@ -5182,6 +6813,11 @@ function initMasterControlPage() {
   });
 
   stockPickerSearch?.addEventListener("input", renderPicker);
+
+  bindStockPickerFilterButtons(stockPickerFilterButtons, () => {
+    renderPicker();
+    stockPickerSearch?.focus();
+  });
 
   stockPickerList?.addEventListener("click", (event) => {
     const option = event.target.closest("[data-stock-picker-option]");
@@ -5220,20 +6856,23 @@ function initMasterControlPage() {
     const payload = {
       itemId: item.id,
       reason,
+      isHidden: Boolean(fields.isHidden?.checked),
+      forceHiddenUpdate: true,
       values: {
         brand: String(fields.brand.value ?? "").trim().replace(/\s+/g, " "),
         model: String(fields.model.value ?? "").trim().replace(/\s+/g, " "),
         name: String(fields.name.value ?? "").trim().replace(/\s+/g, " "),
         sku: String(fields.sku.value ?? "").trim().replace(/\s+/g, " "),
-        unit: String(fields.unit.value ?? "").trim().replace(/\s+/g, " ").toUpperCase(),
+        unit: normalizeUnitInput(fields.unit.value),
         location: String(fields.location.value ?? "").trim().replace(/\s+/g, " "),
         ownQuantity: Math.max(Number(fields.ownQuantity.value ?? 0), 0),
         consignmentQuantity: Math.max(Number(fields.consignmentQuantity.value ?? 0), 0),
         reorderLevel: Math.max(Number(fields.reorderLevel.value ?? 0), 0),
+        isHidden: Boolean(fields.isHidden?.checked),
         stockCondition: serializeStockConditions(getCheckedFormValues(form, "stockCondition"))
       }
     };
-    if (Object.entries(payload.values).some(([key, value]) => !["ownQuantity", "consignmentQuantity", "reorderLevel"].includes(key) && !String(value ?? "").trim())) {
+    if (Object.entries(payload.values).some(([key, value]) => !["ownQuantity", "consignmentQuantity", "reorderLevel", "isHidden"].includes(key) && !String(value ?? "").trim())) {
       showNotice(content, "Complete all item details before saving.");
       return;
     }
@@ -5271,10 +6910,11 @@ function initRelocateStockPage() {
   const relocateStockPickerPopover = document.querySelector("#relocate-stock-picker-popover");
   const relocateStockPickerSearch = document.querySelector("#relocate-stock-picker-search");
   const relocateStockPickerList = document.querySelector("#relocate-stock-picker-list");
+  const relocateStockPickerFilterButtons = document.querySelectorAll("[data-stock-picker-filter]");
   if (!content || !form || !itemSelect || !currentLocationDisplay || !newLocationInput || !remarksInput) return;
 
   const renderOptions = (selectedId = "") => {
-    const inventory = loadData().inventory
+    const inventory = getVisibleInventoryItems(loadData().inventory)
       .slice()
       .sort((a, b) => String(a.model ?? "").localeCompare(String(b.model ?? "")) || String(a.name ?? "").localeCompare(String(b.name ?? "")));
     itemSelect.innerHTML = [
@@ -5299,13 +6939,18 @@ function initRelocateStockPage() {
     currentLocationDisplay.placeholder = item ? "" : "Select an item first";
   };
 
+  const renderRelocateStockPicker = (inventory, selectedId = itemSelect.value, searchTerm = relocateStockPickerSearch?.value ?? "") => {
+    renderStockPickerList(relocateStockPickerList, inventory, selectedId, searchTerm, {
+      onlyInStock: false,
+      emptyMessage: "No inventory items match your search.",
+      filter: getActiveStockPickerFilter(relocateStockPickerFilterButtons)
+    });
+  };
+
   renderOptions();
   updateCurrentLocation();
   const initialData = loadData();
-  renderStockPickerList(relocateStockPickerList, initialData.inventory, itemSelect.value, relocateStockPickerSearch?.value ?? "", {
-    onlyInStock: false,
-    emptyMessage: "No inventory items match your search."
-  });
+  renderRelocateStockPicker(initialData.inventory);
   updateStockPickerButton(relocateStockPickerButton, getSelectedItem(), { quantityLabel: "current" });
 
   if (!form.dataset.bound) {
@@ -5315,10 +6960,7 @@ function initRelocateStockPage() {
       relocateStockPickerButton.setAttribute("aria-expanded", String(open));
       if (open) {
         const currentData = loadData();
-        renderStockPickerList(relocateStockPickerList, currentData.inventory, itemSelect.value, relocateStockPickerSearch?.value ?? "", {
-          onlyInStock: false,
-          emptyMessage: "No inventory items match your search."
-        });
+        renderRelocateStockPicker(currentData.inventory);
         requestAnimationFrame(() => relocateStockPickerSearch?.focus());
       }
     };
@@ -5328,10 +6970,7 @@ function initRelocateStockPage() {
       itemSelect.value = selectedItem.id;
       updateCurrentLocation();
       updateStockPickerButton(relocateStockPickerButton, selectedItem, { quantityLabel: "current" });
-      renderStockPickerList(relocateStockPickerList, loadData().inventory, selectedItem.id, relocateStockPickerSearch?.value ?? "", {
-        onlyInStock: false,
-        emptyMessage: "No inventory items match your search."
-      });
+      renderRelocateStockPicker(loadData().inventory, selectedItem.id);
     };
 
     relocateStockPickerButton?.addEventListener("click", () => {
@@ -5340,10 +6979,12 @@ function initRelocateStockPage() {
 
     relocateStockPickerSearch?.addEventListener("input", () => {
       const currentData = loadData();
-      renderStockPickerList(relocateStockPickerList, currentData.inventory, itemSelect.value, relocateStockPickerSearch.value, {
-        onlyInStock: false,
-        emptyMessage: "No inventory items match your search."
-      });
+      renderRelocateStockPicker(currentData.inventory, itemSelect.value, relocateStockPickerSearch.value);
+    });
+
+    bindStockPickerFilterButtons(relocateStockPickerFilterButtons, () => {
+      renderRelocateStockPicker(loadData().inventory);
+      relocateStockPickerSearch?.focus();
     });
 
     relocateStockPickerList?.addEventListener("click", (event) => {
@@ -5370,6 +7011,7 @@ function initRelocateStockPage() {
     itemSelect.addEventListener("change", () => {
       updateCurrentLocation();
       updateStockPickerButton(relocateStockPickerButton, getSelectedItem(), { quantityLabel: "current" });
+      renderRelocateStockPicker(loadData().inventory);
     });
 
     form.addEventListener("submit", async (event) => {
@@ -5417,10 +7059,7 @@ function initRelocateStockPage() {
       updateCurrentLocation();
       updateStockPickerButton(relocateStockPickerButton, null, { quantityLabel: "current" });
       if (relocateStockPickerSearch) relocateStockPickerSearch.value = "";
-      renderStockPickerList(relocateStockPickerList, loadData().inventory, "", "", {
-        onlyInStock: false,
-        emptyMessage: "No inventory items match your search."
-      });
+      renderRelocateStockPicker(loadData().inventory, "", "");
       showToast("Stock relocation saved and audit record created.");
     });
     form.dataset.bound = "true";
@@ -5440,30 +7079,37 @@ function initAddStockPage() {
   const adjustStockPickerPopover = document.querySelector("#adjust-stock-picker-popover");
   const adjustStockPickerSearch = document.querySelector("#adjust-stock-picker-search");
   const adjustStockPickerList = document.querySelector("#adjust-stock-picker-list");
+  const adjustStockPickerFilterButtons = document.querySelectorAll("[data-stock-picker-filter]");
   const adjustConsignmentRestockNotice = document.querySelector("#adjust-consignment-restock-notice");
   const addAdjustmentLineButton = document.querySelector("#add-adjustment-line");
   const adjustmentForm = document.querySelector("#adjustment-form");
   if (!content || !adjustItemSelect || !adjustQuantityInput || !adjustStockTypeSelect || !adjustmentLines || !adjustmentEmpty || !adjustmentSummary || !addAdjustmentLineButton || !adjustmentForm) return;
 
+  const renderAdjustStockPicker = (inventory, selectedId = adjustItemSelect.value, searchTerm = adjustStockPickerSearch?.value ?? "") => {
+    renderStockPickerList(adjustStockPickerList, inventory, selectedId, searchTerm, {
+      onlyInStock: false,
+      emptyMessage: "No inventory items match your search.",
+      filter: getActiveStockPickerFilter(adjustStockPickerFilterButtons)
+    });
+  };
+
   const refreshAddStockOptions = () => {
     const data = loadData();
+    const visibleInventory = getVisibleInventoryItems(data.inventory);
     const currentValue = adjustItemSelect.value;
-    adjustItemSelect.innerHTML = data.inventory.length
-      ? buildAdjustmentOptions(data.inventory)
+    adjustItemSelect.innerHTML = visibleInventory.length
+      ? buildAdjustmentOptions(visibleInventory)
       : `<option value="">No inventory items available</option>`;
 
     if (currentValue && Array.from(adjustItemSelect.options).some((option) => option.value === currentValue)) {
       adjustItemSelect.value = currentValue;
     }
 
-    const selectedItem = data.inventory.find((item) => item.id === adjustItemSelect.value);
-    renderStockPickerList(adjustStockPickerList, data.inventory, adjustItemSelect.value, adjustStockPickerSearch?.value ?? "", {
-      onlyInStock: false,
-      emptyMessage: "No inventory items match your search."
-    });
+    const selectedItem = visibleInventory.find((item) => item.id === adjustItemSelect.value);
+    renderAdjustStockPicker(visibleInventory);
     updateStockPickerButton(adjustStockPickerButton, selectedItem, { quantityLabel: "current" });
     updateConsignmentRestockNotice(adjustConsignmentRestockNotice, selectedItem);
-    renderAdjustmentIssueList(adjustmentLines, adjustmentEmpty, adjustmentSummary, data.inventory);
+    renderAdjustmentIssueList(adjustmentLines, adjustmentEmpty, adjustmentSummary, visibleInventory);
   };
 
   refreshAddStockOptions();
@@ -5475,10 +7121,7 @@ function initAddStockPage() {
       adjustStockPickerButton.setAttribute("aria-expanded", String(open));
       if (open) {
         const currentData = loadData();
-        renderStockPickerList(adjustStockPickerList, currentData.inventory, adjustItemSelect.value, adjustStockPickerSearch?.value ?? "", {
-          onlyInStock: false,
-          emptyMessage: "No inventory items match your search."
-        });
+        renderAdjustStockPicker(currentData.inventory);
         requestAnimationFrame(() => adjustStockPickerSearch?.focus());
       }
     };
@@ -5489,10 +7132,12 @@ function initAddStockPage() {
 
     adjustStockPickerSearch?.addEventListener("input", () => {
       const currentData = loadData();
-      renderStockPickerList(adjustStockPickerList, currentData.inventory, adjustItemSelect.value, adjustStockPickerSearch.value, {
-        onlyInStock: false,
-        emptyMessage: "No inventory items match your search."
-      });
+      renderAdjustStockPicker(currentData.inventory, adjustItemSelect.value, adjustStockPickerSearch.value);
+    });
+
+    bindStockPickerFilterButtons(adjustStockPickerFilterButtons, () => {
+      renderAdjustStockPicker(loadData().inventory);
+      adjustStockPickerSearch?.focus();
     });
 
     adjustStockPickerList?.addEventListener("click", (event) => {
@@ -5504,10 +7149,7 @@ function initAddStockPage() {
       adjustItemSelect.value = selectedItem.id;
       updateStockPickerButton(adjustStockPickerButton, selectedItem, { quantityLabel: "current" });
       updateConsignmentRestockNotice(adjustConsignmentRestockNotice, selectedItem);
-      renderStockPickerList(adjustStockPickerList, currentData.inventory, selectedItem.id, adjustStockPickerSearch?.value ?? "", {
-        onlyInStock: false,
-        emptyMessage: "No inventory items match your search."
-      });
+      renderAdjustStockPicker(currentData.inventory, selectedItem.id);
       setAdjustStockPickerOpen(false);
     });
 
@@ -5528,10 +7170,7 @@ function initAddStockPage() {
       const selectedItem = currentData.inventory.find((item) => item.id === adjustItemSelect.value);
       updateStockPickerButton(adjustStockPickerButton, selectedItem, { quantityLabel: "current" });
       updateConsignmentRestockNotice(adjustConsignmentRestockNotice, selectedItem);
-      renderStockPickerList(adjustStockPickerList, currentData.inventory, adjustItemSelect.value, adjustStockPickerSearch?.value ?? "", {
-        onlyInStock: false,
-        emptyMessage: "No inventory items match your search."
-      });
+      renderAdjustStockPicker(currentData.inventory);
     });
 
     addAdjustmentLineButton.addEventListener("click", () => {
@@ -5646,6 +7285,7 @@ function initDrawStockPage() {
   const stockPickerPopover = document.querySelector("#stock-picker-popover");
   const stockPickerSearch = document.querySelector("#stock-picker-search");
   const stockPickerList = document.querySelector("#stock-picker-list");
+  const stockPickerFilterButtons = document.querySelectorAll("[data-stock-picker-filter]");
   const receiverInput = document.querySelector("#receiver-input");
   const receiverPickerList = document.querySelector("#receiver-picker-list");
   const addStockOutLineButton = document.querySelector("#add-stock-out-line");
@@ -5687,22 +7327,31 @@ function initDrawStockPage() {
     syncCustomSelect(stockOutSourceSelect);
   };
 
+  const getActiveStockPickerFilter = () => document.querySelector("[data-stock-picker-filter].is-active")?.dataset.stockPickerFilter ?? "all";
+
+  const renderDrawStockPicker = (inventory, selectedId = stockOutItemSelect.value) => {
+    renderStockPickerList(stockPickerList, inventory, selectedId, stockPickerSearch?.value ?? "", {
+      filter: getActiveStockPickerFilter()
+    });
+  };
+
   const refreshDrawStockOptions = () => {
     const data = loadData();
+    const visibleInventory = getVisibleInventoryItems(data.inventory);
     const currentValue = stockOutItemSelect.value;
-    stockOutItemSelect.innerHTML = data.inventory.some((item) => item.quantity > 0)
-      ? buildStockOutOptions(data.inventory)
+    stockOutItemSelect.innerHTML = visibleInventory.some((item) => item.quantity > 0)
+      ? buildStockOutOptions(visibleInventory)
       : `<option value="">No in-stock items available</option>`;
 
     if (currentValue && Array.from(stockOutItemSelect.options).some((option) => option.value === currentValue)) {
       stockOutItemSelect.value = currentValue;
     }
 
-    const selectedItem = data.inventory.find((item) => item.id === stockOutItemSelect.value);
-    renderStockPickerList(stockPickerList, data.inventory, stockOutItemSelect.value, stockPickerSearch?.value ?? "");
+    const selectedItem = visibleInventory.find((item) => item.id === stockOutItemSelect.value);
+    renderDrawStockPicker(visibleInventory);
     updateStockPickerButton(stockPickerButton, selectedItem);
     updateStockOutSourceOptions(selectedItem);
-    renderStockOutIssueList(stockOutLines, stockOutEmpty, stockOutSummary, data.inventory);
+    renderStockOutIssueList(stockOutLines, stockOutEmpty, stockOutSummary, visibleInventory);
   };
 
   refreshDrawStockOptions();
@@ -5848,7 +7497,7 @@ function initDrawStockPage() {
       stockPickerButton.setAttribute("aria-expanded", String(open));
       if (open) {
         const currentData = loadData();
-        renderStockPickerList(stockPickerList, currentData.inventory, stockOutItemSelect.value, stockPickerSearch?.value ?? "");
+        renderDrawStockPicker(currentData.inventory);
         requestAnimationFrame(() => stockPickerSearch?.focus());
       }
     };
@@ -5859,7 +7508,19 @@ function initDrawStockPage() {
 
     stockPickerSearch?.addEventListener("input", () => {
       const currentData = loadData();
-      renderStockPickerList(stockPickerList, currentData.inventory, stockOutItemSelect.value, stockPickerSearch.value);
+      renderDrawStockPicker(currentData.inventory);
+    });
+
+    stockPickerFilterButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        stockPickerFilterButtons.forEach((control) => {
+          const isActive = control === button;
+          control.classList.toggle("is-active", isActive);
+          control.setAttribute("aria-pressed", String(isActive));
+        });
+        renderDrawStockPicker(loadData().inventory);
+        stockPickerSearch?.focus();
+      });
     });
 
     stockPickerList?.addEventListener("click", (event) => {
@@ -5871,7 +7532,7 @@ function initDrawStockPage() {
       stockOutItemSelect.value = selectedItem.id;
       updateStockPickerButton(stockPickerButton, selectedItem);
       updateStockOutSourceOptions(selectedItem);
-      renderStockPickerList(stockPickerList, currentData.inventory, selectedItem.id, stockPickerSearch?.value ?? "");
+      renderDrawStockPicker(currentData.inventory, selectedItem.id);
       setStockPickerOpen(false);
     });
 
@@ -5892,7 +7553,7 @@ function initDrawStockPage() {
       const selectedItem = currentData.inventory.find((item) => item.id === stockOutItemSelect.value);
       updateStockPickerButton(stockPickerButton, selectedItem);
       updateStockOutSourceOptions(selectedItem);
-      renderStockPickerList(stockPickerList, currentData.inventory, stockOutItemSelect.value, stockPickerSearch?.value ?? "");
+      renderDrawStockPicker(currentData.inventory);
     });
 
     const setReceiverPickerOpen = (open) => {
@@ -6252,7 +7913,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (currentUser) {
     await initializeBackendData();
   }
-  if (["inventory", "activity-history", "activity-detail", "add-stock", "create-stock", "draw-stock", "relocate-stock", "manage-users", "master-control"].includes(document.body.dataset.page)) {
+  if (document.body.dataset.page === "reports") {
+    renderReportsPage();
+  }
+  if (["reports", "inventory", "activity-history", "activity-detail", "add-stock", "create-stock", "draw-stock", "relocate-stock", "manage-users", "master-control"].includes(document.body.dataset.page)) {
     initSidebar();
   }
   initSectionNavigation();

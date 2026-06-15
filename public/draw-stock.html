@@ -116,7 +116,13 @@
                     <span class="stock-picker-button-meta">Search by description, SKU, brand, or category</span>
                   </button>
                   <div class="stock-picker-popover" id="stock-picker-popover" hidden>
-                    <input id="stock-picker-search" class="stock-picker-search" type="search" placeholder="Search item, SKU, brand, or category" autocomplete="off">
+                    <input id="stock-picker-search" class="stock-picker-search" type="search" placeholder="Search item, stock code, brand, category, condition, or location" autocomplete="off">
+                    <div class="stock-picker-quick-filters" aria-label="Stock item filters">
+                      <button type="button" class="stock-picker-filter is-active" data-stock-picker-filter="all" aria-pressed="true">All</button>
+                      <button type="button" class="stock-picker-filter" data-stock-picker-filter="own" aria-pressed="false">LC Stock</button>
+                      <button type="button" class="stock-picker-filter" data-stock-picker-filter="consignment" aria-pressed="false">Consignment</button>
+                      <button type="button" class="stock-picker-filter" data-stock-picker-filter="used" aria-pressed="false">Used</button>
+                    </div>
                     <div class="stock-picker-list" id="stock-picker-list" role="listbox" aria-label="Available stock items"></div>
                   </div>
                 </div>
