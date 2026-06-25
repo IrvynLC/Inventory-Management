@@ -4902,6 +4902,11 @@ function formatHandoverRemarksText(value) {
     .trim();
 }
 
+function hasHandoverRemarksText(value) {
+  const text = String(value ?? "").replace(/\r\n?/g, "\n").trim();
+  return Boolean(text && text !== "-");
+}
+
 function renderStockOutIssueList(container, emptyState, summary, inventory) {
   if (!container) return;
 
@@ -5558,6 +5563,7 @@ function paginateHandoverRows(rows) {
 
 function buildHandoverDocumentMarkup(record, items, manualItems = [], options = {}) {
   const logoSrc = options.logoSrc || HANDOVER_LOGO_SRC;
+  const showRemarksColumn = manualItems.some((line) => hasHandoverRemarksText(line.remarks));
   const handoverRows = [
     ...items.map((line) => {
       const item = line.itemSnapshot ?? {};
@@ -5629,7 +5635,7 @@ function buildHandoverDocumentMarkup(record, items, manualItems = [], options = 
         <span>02</span>
         <h2>${isContinuation ? "Issued Items Continued" : "Issued Items"}</h2>
       </div>
-      <table class="handover-items-table">
+      <table class="handover-items-table${showRemarksColumn ? " has-remarks-column" : " no-remarks-column"}">
         <thead>
           <tr>
             <th>No.</th>
@@ -5639,7 +5645,7 @@ function buildHandoverDocumentMarkup(record, items, manualItems = [], options = 
             <th>Stock Code</th>
             <th>Total Qty</th>
             <th>Unit</th>
-            <th>Remarks</th>
+            ${showRemarksColumn ? "<th>Remarks</th>" : ""}
           </tr>
         </thead>
         <tbody>
@@ -5652,7 +5658,7 @@ function buildHandoverDocumentMarkup(record, items, manualItems = [], options = 
               <td>${escapeHtml(line.stockCode)}</td>
               <td>${escapeHtml(String(line.quantity))}</td>
               <td>${escapeHtml(formatUnitDisplay(line.unit))}</td>
-              <td class="handover-remarks-cell">${escapeHtml(line.remarks)}</td>
+              ${showRemarksColumn ? `<td class="handover-remarks-cell">${escapeHtml(line.remarks)}</td>` : ""}
             </tr>
           `).join("")}
         </tbody>

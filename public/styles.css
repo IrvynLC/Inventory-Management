@@ -6541,6 +6541,11 @@ body.modal-open .modal-backdrop {
   vertical-align: top;
 }
 
+.handover-items-table td {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .handover-items-table th:nth-child(1),
 .handover-items-table td:nth-child(1) {
   width: 5%;
@@ -6576,6 +6581,38 @@ body.modal-open .modal-backdrop {
 .handover-items-table th:nth-child(8),
 .handover-items-table td:nth-child(8) {
   width: 24%;
+}
+
+.handover-items-table.no-remarks-column th:nth-child(1),
+.handover-items-table.no-remarks-column td:nth-child(1) {
+  width: 5%;
+}
+
+.handover-items-table.no-remarks-column th:nth-child(2),
+.handover-items-table.no-remarks-column td:nth-child(2) {
+  width: 10%;
+}
+
+.handover-items-table.no-remarks-column th:nth-child(3),
+.handover-items-table.no-remarks-column td:nth-child(3) {
+  width: 12%;
+}
+
+.handover-items-table.no-remarks-column th:nth-child(4),
+.handover-items-table.no-remarks-column td:nth-child(4) {
+  width: 33%;
+}
+
+.handover-items-table.no-remarks-column th:nth-child(5),
+.handover-items-table.no-remarks-column td:nth-child(5) {
+  width: 20%;
+}
+
+.handover-items-table.no-remarks-column th:nth-child(6),
+.handover-items-table.no-remarks-column td:nth-child(6),
+.handover-items-table.no-remarks-column th:nth-child(7),
+.handover-items-table.no-remarks-column td:nth-child(7) {
+  width: 10%;
 }
 
 .handover-items-table th {
