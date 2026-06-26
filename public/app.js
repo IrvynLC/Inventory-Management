@@ -5519,8 +5519,8 @@ function getActivityDetailRecord(type, id, data) {
 const HANDOVER_LOGO_SRC = "assets/links-creation-logo.png";
 const INTERNAL_SIGNATURE_ASSETS = [
   { name: "Irvyn", src: "assets/Irvyn Sign.png" },
-  { name: "Zin", src: "assets/Zin Sign.jpg.jpeg" },
-  { name: "Thillai Govindarajan", src: "assets/Thailli Sign.jpg.jpeg" }
+  { name: "Zin", src: "assets/Zin Sign.png" },
+  { name: "Thillai Govindarajan", src: "assets/Thailli Sign.png" }
 ];
 
 function normalizeSignatureName(value) {
