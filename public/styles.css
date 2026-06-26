@@ -6672,11 +6672,34 @@ body.modal-open .modal-backdrop {
 .signature-line {
   display: flex;
   align-items: flex-end;
+  gap: 12px;
   height: 42px;
   border-bottom: 1px solid #203047;
 }
 
 .signature-line strong {
+  min-width: 0;
+  transform: translateY(1px);
+  overflow-wrap: anywhere;
+}
+
+.signature-box-autofilled .signature-line {
+  align-items: flex-end;
+  height: 58px;
+}
+
+.signature-image {
+  display: block;
+  max-width: 140px;
+  max-height: 48px;
+  object-fit: contain;
+}
+
+.signature-date {
+  color: #253d5b;
+  font-size: 0.76rem;
+  font-weight: 750;
+  white-space: nowrap;
   transform: translateY(1px);
 }
 
@@ -7354,6 +7377,19 @@ body.modal-open .modal-backdrop {
 
   .signature-line {
     height: 30px;
+  }
+
+  .signature-box-autofilled .signature-line {
+    height: 42px;
+  }
+
+  .signature-image {
+    max-width: 112px;
+    max-height: 34px;
+  }
+
+  .signature-date {
+    font-size: 0.66rem;
   }
 
   .print-footer {
@@ -8706,6 +8742,85 @@ body[data-page="draw-stock"] .field-grid {
   gap: 18px;
 }
 
+body[data-page="draw-stock"] .handover-type-field {
+  display: grid;
+  align-content: start;
+  gap: 0;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: #1f2d45;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+body[data-page="draw-stock"] .handover-type-field legend {
+  display: block;
+  padding: 0;
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+
+body[data-page="draw-stock"] .handover-type-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+}
+
+body[data-page="draw-stock"] .handover-type-toggle label {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 13px;
+  border: 1px solid #d6dfeb;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #52627a;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, color 160ms ease;
+}
+
+body[data-page="draw-stock"] .handover-type-toggle input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+body[data-page="draw-stock"] .handover-type-toggle label::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid #a9b8cc;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: inset 0 0 0 3px #ffffff;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+body[data-page="draw-stock"] .handover-type-toggle span {
+  padding: 0;
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+body[data-page="draw-stock"] .handover-type-toggle label:has(input:checked) {
+  border-color: rgba(47, 109, 246, 0.36);
+  background: #f3f7ff;
+  color: #17345c;
+  box-shadow: 0 8px 18px rgba(47, 109, 246, 0.08);
+}
+
+body[data-page="draw-stock"] .handover-type-toggle label:has(input:checked)::before {
+  border-color: #17345c;
+  background: #17345c;
+}
+
 body[data-page="draw-stock"] .draw-stock-submit-row {
   display: flex;
   align-items: center;
@@ -8795,6 +8910,11 @@ body[data-page="draw-stock"] .draw-stock-submit-row .button-primary {
   }
 
   body[data-page="draw-stock"] .stock-out-builder-grid label:has(#stock-out-quantity) {
+    width: 100%;
+  }
+
+  body[data-page="draw-stock"] .handover-type-toggle {
+    justify-self: stretch;
     width: 100%;
   }
 }

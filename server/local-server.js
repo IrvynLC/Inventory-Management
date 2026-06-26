@@ -286,6 +286,7 @@ async function initializeDatabase() {
       document_no TEXT NOT NULL UNIQUE,
       project_title TEXT NOT NULL,
       received_by TEXT NOT NULL,
+      handover_type TEXT NOT NULL DEFAULT 'external',
       created_at TIMESTAMPTZ,
       created_by_user_id TEXT,
       created_by_name TEXT
@@ -414,6 +415,9 @@ async function initializeDatabase() {
       ALTER TABLE inventory_items
         ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN NOT NULL DEFAULT false;
 
+      ALTER TABLE stock_outs
+        ADD COLUMN IF NOT EXISTS handover_type TEXT NOT NULL DEFAULT 'external';
+
       UPDATE inventory_items
       SET unit = 'PCS'
       WHERE upper(trim(unit)) = 'PC';
@@ -462,6 +466,12 @@ async function initializeDatabase() {
         ALTER TABLE stock_out_items
           ADD CONSTRAINT stock_out_items_issue_source_check
           CHECK (issue_source IN ('own', 'consignment')) NOT VALID;
+      END IF;
+
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stock_outs_handover_type_check') THEN
+        ALTER TABLE stock_outs
+          ADD CONSTRAINT stock_outs_handover_type_check
+          CHECK (handover_type IN ('external', 'internal')) NOT VALID;
       END IF;
 
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stock_out_items_quantity_check') THEN
@@ -893,6 +903,7 @@ async function loadStateFromRelational(client = pool) {
       manualItems: stockOutManualItemsByRecord.get(row.id) ?? [],
       projectTitle: row.project_title,
       receivedBy: row.received_by,
+      handoverType: row.handover_type === "internal" ? "internal" : "external",
       createdAt: toIsoValue(row.created_at),
       createdByUserId: row.created_by_user_id,
       createdByName: row.created_by_name
@@ -1003,14 +1014,15 @@ async function replaceRelationalState(client, data) {
   for (const stockOut of normalized.stockOuts) {
     await client.query(
       `
-        INSERT INTO stock_outs (id, document_no, project_title, received_by, created_at, created_by_user_id, created_by_name)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO stock_outs (id, document_no, project_title, received_by, handover_type, created_at, created_by_user_id, created_by_name)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       `,
       [
         stockOut.id,
         stockOut.documentNo ?? stockOut.id,
         stockOut.projectTitle ?? "",
         stockOut.receivedBy ?? "",
+        stockOut.handoverType === "internal" ? "internal" : "external",
         toTimestampValue(stockOut.createdAt),
         stockOut.createdByUserId ?? null,
         stockOut.createdByName ?? null
@@ -1280,14 +1292,15 @@ async function insertAdjustment(client, adjustment) {
 async function insertStockOut(client, stockOut) {
   await client.query(
     `
-      INSERT INTO stock_outs (id, document_no, project_title, received_by, created_at, created_by_user_id, created_by_name)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      INSERT INTO stock_outs (id, document_no, project_title, received_by, handover_type, created_at, created_by_user_id, created_by_name)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     `,
     [
       stockOut.id,
       stockOut.documentNo ?? stockOut.id,
       stockOut.projectTitle ?? "",
       stockOut.receivedBy ?? "",
+      stockOut.handoverType === "internal" ? "internal" : "external",
       toTimestampValue(stockOut.createdAt),
       stockOut.createdByUserId ?? null,
       stockOut.createdByName ?? null
@@ -1998,6 +2011,7 @@ async function handleDrawStockAction(user, payload) {
     const timestamp = new Date().toISOString();
     const projectTitle = toCleanText(payload.projectTitle);
     const receivedBy = toCleanText(payload.receivedBy);
+    const handoverType = payload.handoverType === "internal" ? "internal" : "external";
     const lines = Array.isArray(payload.lines) ? payload.lines : [];
     const manualItems = Array.isArray(payload.manualItems) ? payload.manualItems : [];
     if (!projectTitle || !receivedBy) throw new Error("Complete project and receiver details before saving.");
@@ -2098,6 +2112,7 @@ async function handleDrawStockAction(user, payload) {
       manualItems: manualIssuedItems,
       projectTitle,
       receivedBy,
+      handoverType,
       createdAt: timestamp,
       createdByUserId: user.id,
       createdByName: user.name

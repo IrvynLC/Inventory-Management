@@ -722,6 +722,7 @@ function normalizeAdjustmentRecord(entry) {
 function normalizeStockOutRecord(entry) {
   return {
     ...entry,
+    handoverType: entry.handoverType === "internal" ? "internal" : "external",
     createdByName: entry.createdByName ?? entry.createdBy?.name ?? "Unknown User",
     createdByUserId: entry.createdByUserId ?? entry.createdBy?.userId ?? null
   };
@@ -1489,7 +1490,7 @@ function showStockOutConfirmationDialog(lines, details) {
         <section class="confirm-category-section confirm-category-lc">
           <div class="confirm-category-header">
             <h4>${escapeHtml(details.projectTitle || "Stock withdrawal")}</h4>
-            <span>Received by ${escapeHtml(details.receivedBy || "-")}</span>
+            <span>${details.handoverType === "internal" ? "Internal" : "External"} handover | Received by ${escapeHtml(details.receivedBy || "-")}</span>
           </div>
           <div class="confirm-line-list">
             ${lines.map((line) => `
@@ -5041,7 +5042,7 @@ function getActivityEvents(data) {
       createdAt: entry.createdAt,
       actions: [
         { kind: "view-handover", label: "View Form", stockOutId: entry.id },
-        { kind: "download-handover", label: "Download Form", stockOutId: entry.id }
+        { kind: "download-handover", label: "Download PDF", stockOutId: entry.id }
       ]
     };
   });
@@ -5516,6 +5517,22 @@ function getActivityDetailRecord(type, id, data) {
 }
 
 const HANDOVER_LOGO_SRC = "assets/links-creation-logo.png";
+const INTERNAL_SIGNATURE_ASSETS = [
+  { name: "Irvyn", src: "assets/Irvyn Sign.png" },
+  { name: "Zin", src: "assets/Zin Sign.jpg.jpeg" },
+  { name: "Thillai Govindarajan", src: "assets/Thailli Sign.jpg.jpeg" }
+];
+
+function normalizeSignatureName(value) {
+  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function getInternalSignatureSrc(name, signatureSrcs = {}) {
+  const normalizedName = normalizeSignatureName(name);
+  const signature = INTERNAL_SIGNATURE_ASSETS.find((entry) => normalizeSignatureName(entry.name) === normalizedName);
+  if (!signature) return "";
+  return signatureSrcs[signature.name] || signature.src;
+}
 
 function getHandoverRowWeight(line) {
   const descriptionLines = Math.max(1, Math.ceil(String(line.description ?? "").length / 34));
@@ -5563,6 +5580,8 @@ function paginateHandoverRows(rows) {
 
 function buildHandoverDocumentMarkup(record, items, manualItems = [], options = {}) {
   const logoSrc = options.logoSrc || HANDOVER_LOGO_SRC;
+  const signatureSrcs = options.signatureSrcs || {};
+  const isInternalHandover = record.handoverType === "internal";
   const showRemarksColumn = manualItems.some((line) => hasHandoverRemarksText(line.remarks));
   const handoverRows = [
     ...items.map((line) => {
@@ -5608,6 +5627,22 @@ function buildHandoverDocumentMarkup(record, items, manualItems = [], options = 
       </div>
     </header>
   `;
+  const renderSignatureBox = (role, name) => {
+    const shouldAutofill = role === "Issued By" || isInternalHandover;
+    const displayName = shouldAutofill ? (name || role) : "";
+    const signatureSrc = shouldAutofill ? getInternalSignatureSrc(displayName, signatureSrcs) : "";
+    return `
+      <div class="signature-box${shouldAutofill ? " signature-box-autofilled" : ""}">
+        <span class="signature-role">${escapeHtml(role)}</span>
+        <div class="signature-line">
+          ${displayName ? `<strong>${escapeHtml(displayName)}</strong>` : ""}
+          ${signatureSrc ? `<img class="signature-image" src="${escapeHtml(signatureSrc)}" alt="" onerror="this.hidden=true">` : ""}
+          ${shouldAutofill ? `<time class="signature-date">${escapeHtml(formatDateOnly(record.createdAt))}</time>` : ""}
+        </div>
+        <span>Name / Signature / Date</span>
+      </div>
+    `;
+  };
   const renderContinuationHeader = (pageNumber) => `
     <header class="handover-continuation-header">
       <span>Material Handover Form</span>
@@ -5676,16 +5711,8 @@ function buildHandoverDocumentMarkup(record, items, manualItems = [], options = 
       </section>
 
       <section class="signatures">
-        <div class="signature-box">
-          <span class="signature-role">Issued By</span>
-          <div class="signature-line"><strong>${escapeHtml(record.createdByName ?? "Issued By")}</strong></div>
-          <span>Name / Signature / Date</span>
-        </div>
-        <div class="signature-box">
-          <span class="signature-role">Received By</span>
-          <div class="signature-line"></div>
-          <span>Name / Signature / Date</span>
-        </div>
+        ${renderSignatureBox("Issued By", record.createdByName)}
+        ${renderSignatureBox("Received By", record.receivedBy)}
       </section>
 
       <footer class="print-footer">
@@ -5732,19 +5759,42 @@ async function loadAssetAsDataUrl(src) {
 }
 
 async function downloadHandoverFile(stockOutId) {
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) {
+    alert("Allow pop-ups for this site so the handover PDF window can open.");
+    return;
+  }
+  printWindow.document.write(`<!DOCTYPE html><title>Preparing handover PDF</title><body style="font-family: Arial, sans-serif; padding: 24px;">Preparing handover PDF...</body>`);
+
   const data = loadData();
   const record = data.stockOuts.find((entry) => entry.id === stockOutId);
-  if (!record) return;
+  if (!record) {
+    printWindow.close();
+    return;
+  }
 
   const items = normalizeStockOutItems(record, data.inventory);
   const manualItems = normalizeStockOutManualItems(record);
   let logoSrc = HANDOVER_LOGO_SRC;
+  const signatureSrcs = {};
   try {
     logoSrc = await loadAssetAsDataUrl(HANDOVER_LOGO_SRC);
   } catch (error) {
     console.warn("Could not embed handover logo in downloaded file:", error);
   }
-  const documentMarkup = buildHandoverDocumentMarkup(record, items, manualItems, { logoSrc });
+  const requiredSignatureNames = [
+    record.createdByName,
+    record.handoverType === "internal" ? record.receivedBy : ""
+  ].map((name) => normalizeSignatureName(name));
+  for (const signature of INTERNAL_SIGNATURE_ASSETS) {
+    if (!requiredSignatureNames.includes(normalizeSignatureName(signature.name))) continue;
+    try {
+      signatureSrcs[signature.name] = await loadAssetAsDataUrl(signature.src);
+    } catch (error) {
+      console.warn(`Could not embed signature asset for ${signature.name}:`, error);
+    }
+  }
+  const documentMarkup = buildHandoverDocumentMarkup(record, items, manualItems, { logoSrc, signatureSrcs });
   const stylesheetText = Array.from(document.styleSheets)
     .map((styleSheet) => {
       try {
@@ -5767,18 +5817,17 @@ async function downloadHandoverFile(stockOutId) {
   <main class="print-shell">
     ${documentMarkup}
   </main>
+  <script>
+    window.addEventListener("load", () => {
+      setTimeout(() => window.print(), 250);
+    });
+  </script>
 </body>
 </html>`;
 
-  const blob = new Blob([exportHtml], { type: "text/html;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `${record.documentNo || "handover-form"}.html`;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  printWindow.document.open();
+  printWindow.document.write(exportHtml);
+  printWindow.document.close();
 }
 
 async function applyActivityCorrection(type, id, form) {
@@ -7568,6 +7617,20 @@ function initDrawStockPage() {
       receiverInput.setAttribute("aria-expanded", String(open));
     };
 
+    const getDefaultInternalReceiver = () => receiverPickerList
+      ?.querySelector("[data-receiver-option]")
+      ?.dataset.receiverOption ?? "";
+
+    const syncHandoverReceiver = () => {
+      if (!receiverInput) return;
+      const handoverType = stockOutForm.querySelector('input[name="handoverType"]:checked')?.value;
+      const defaultReceiver = getDefaultInternalReceiver();
+      if (handoverType === "external" && defaultReceiver && receiverInput.value.trim() === defaultReceiver) {
+        receiverInput.value = "";
+        receiverInput.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    };
+
     const filterReceiverOptions = () => {
       if (!receiverInput || !receiverPickerList) return;
       const searchTerm = receiverInput.value.trim().toLowerCase();
@@ -7610,6 +7673,10 @@ function initDrawStockPage() {
       setReceiverPickerOpen(false);
     });
 
+    stockOutForm.querySelectorAll('input[name="handoverType"]').forEach((input) => {
+      input.addEventListener("change", syncHandoverReceiver);
+    });
+
     stockOutForm.addEventListener("click", (event) => {
       if (event.target.closest("#add-stock-out-line")) {
         event.preventDefault();
@@ -7643,6 +7710,7 @@ function initDrawStockPage() {
       const form = new FormData(stockOutForm);
       const nextData = loadData();
       const currentUser = getCurrentUser();
+      const handoverType = form.get("handoverType") === "internal" ? "internal" : "external";
       const lineItems = Array.from(stockOutForm.querySelectorAll("[data-stock-out-item-row]"))
         .filter((line) => line.dataset.issueSource !== "manual")
         .map((line) => ({
@@ -7709,7 +7777,8 @@ function initDrawStockPage() {
       })));
       const confirmed = await showStockOutConfirmationDialog(confirmationLines, {
         projectTitle: form.get("projectTitle").trim(),
-        receivedBy: form.get("receivedBy").trim()
+        receivedBy: form.get("receivedBy").trim(),
+        handoverType
       });
       if (!confirmed) return;
 
@@ -7718,6 +7787,7 @@ function initDrawStockPage() {
         const result = await sendBackendAction("draw-stock", {
           projectTitle: form.get("projectTitle").trim(),
           receivedBy: form.get("receivedBy").trim(),
+          handoverType,
           lines: lineItems,
           manualItems
         });
@@ -7758,7 +7828,7 @@ function renderHandoverPage() {
   container.innerHTML = `
     <div class="toolbar">
       <button class="button-link" type="button" onclick="window.print()">Print</button>
-      <button class="button-link" type="button" id="handover-download">Download</button>
+      <button class="button-link" type="button" id="handover-download">Download PDF</button>
     </div>
     ${buildHandoverDocumentMarkup(record, items, manualItems)}
   `;
