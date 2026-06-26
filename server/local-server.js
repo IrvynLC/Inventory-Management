@@ -354,6 +354,7 @@ async function initializeDatabase() {
       source_id TEXT NOT NULL,
       root_source_type TEXT,
       root_source_id TEXT,
+      revision_batch_id TEXT,
       reason TEXT NOT NULL,
       created_at TIMESTAMPTZ,
       actor_user_id TEXT,
@@ -413,6 +414,9 @@ async function initializeDatabase() {
     BEGIN
       ALTER TABLE activity_corrections
         ADD COLUMN IF NOT EXISTS is_private BOOLEAN NOT NULL DEFAULT false;
+
+      ALTER TABLE activity_corrections
+        ADD COLUMN IF NOT EXISTS revision_batch_id TEXT;
 
       ALTER TABLE inventory_items
         ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN NOT NULL DEFAULT false;
@@ -936,6 +940,7 @@ async function loadStateFromRelational(client = pool) {
       sourceId: row.source_id,
       rootSourceType: row.root_source_type,
       rootSourceId: row.root_source_id,
+      revisionBatchId: row.revision_batch_id,
       reason: row.reason,
       itemRows: correctionItemsByRecord.get(row.id) ?? [],
       createdAt: toIsoValue(row.created_at),
@@ -1147,9 +1152,9 @@ async function replaceRelationalState(client, data) {
     await client.query(
       `
         INSERT INTO activity_corrections (
-          id, source_type, source_id, root_source_type, root_source_id, reason, created_at, actor_user_id, actor_name, is_private
+          id, source_type, source_id, root_source_type, root_source_id, revision_batch_id, reason, created_at, actor_user_id, actor_name, is_private
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       `,
       [
         correction.id,
@@ -1157,6 +1162,7 @@ async function replaceRelationalState(client, data) {
         correction.sourceId,
         correction.rootSourceType ?? null,
         correction.rootSourceId ?? null,
+        correction.revisionBatchId ?? null,
         correction.reason ?? "",
         toTimestampValue(correction.createdAt),
         correction.actorUserId ?? null,
@@ -1430,9 +1436,9 @@ async function insertCorrection(client, correction) {
   await client.query(
     `
       INSERT INTO activity_corrections (
-        id, source_type, source_id, root_source_type, root_source_id, reason, created_at, actor_user_id, actor_name, is_private
+        id, source_type, source_id, root_source_type, root_source_id, revision_batch_id, reason, created_at, actor_user_id, actor_name, is_private
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
     `,
     [
       correction.id,
@@ -1440,6 +1446,7 @@ async function insertCorrection(client, correction) {
       correction.sourceId,
       correction.rootSourceType ?? null,
       correction.rootSourceId ?? null,
+      correction.revisionBatchId ?? null,
       correction.reason ?? "",
       toTimestampValue(correction.createdAt),
       correction.actorUserId ?? null,
@@ -2544,6 +2551,7 @@ async function handleCorrectActivityAction(user, payload) {
       sourceId: id,
       rootSourceType: record.rootSourceType ?? type,
       rootSourceId: record.rootSourceId ?? id,
+      revisionBatchId: toCleanText(payload.revisionBatchId) || null,
       reason,
       itemRows: correctionRows,
       createdAt: timestamp,

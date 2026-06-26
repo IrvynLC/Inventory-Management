@@ -735,6 +735,7 @@ function normalizeCorrectionRecord(entry) {
     ...entry,
     actorName: entry.actorName ?? entry.createdByName ?? entry.createdBy?.name ?? "Unknown User",
     actorUserId: entry.actorUserId ?? entry.createdByUserId ?? entry.createdBy?.userId ?? null,
+    revisionBatchId: entry.revisionBatchId ?? entry.revision_batch_id ?? null,
     isPrivate: isPrivateAuditRecord(entry),
     itemRows: entry.itemRows ?? []
   };
@@ -2397,6 +2398,7 @@ function renderCorrectionSection(record) {
   const recordLabel = isCreate ? "stock creation" : isStockIn ? "stock-in" : "stock-out";
   const balanceCorrectionRows = isCreate ? record.itemRows : getBalanceCorrectionRows(record);
   const documentOnlyRows = getDocumentOnlyCorrectionRows(record);
+  const isCombinedHandoverCorrection = Boolean(record.isCombinedHandoverCorrection);
   if (!canCorrect) {
     return `
       <section class="panel project-card correction-panel">
@@ -2428,17 +2430,17 @@ function renderCorrectionSection(record) {
       <div class="panel-header panel-header-tight correction-gate">
         <div>
           <p class="eyebrow">Correction</p>
-          <h3>Correction required?</h3>
-          <p class="section-copy">Use this only to fix ${recordLabel} information that was keyed wrongly. A correction creates an audit record and cannot be casually undone.</p>
+          <h3>${isCombinedHandoverCorrection ? "Combined handover correction required?" : "Correction required?"}</h3>
+          <p class="section-copy">${isCombinedHandoverCorrection ? "Use this to correct issued quantities across the original handover and linked add-on records in one workflow." : `Use this only to fix ${recordLabel} information that was keyed wrongly. A correction creates an audit record and cannot be casually undone.`}</p>
         </div>
         <button type="button" class="button-secondary" data-start-correction>Start Correction</button>
       </div>
-      <form id="correction-form" class="stack-form correction-form" hidden>
+      <form id="correction-form" class="stack-form correction-form" ${isCombinedHandoverCorrection ? `data-combined-handover-correction="true" data-combined-stock-out-ids="${escapeHtml((record.combinedStockOutIds ?? []).join(","))}" data-combined-handover-id="${escapeHtml(record.handoverId ?? "")}"` : ""} hidden>
         <div class="correction-form-header">
           <div>
             <p class="eyebrow">Active Correction</p>
-            <h3>Correct this ${recordLabel} record</h3>
-            <p class="section-copy">${isCreate ? "Create an audit-safe correction for item information keyed wrongly during creation." : "Create an audit-safe correction for inventory-issued items. Additional handover items are document-only and do not adjust stock balances."}</p>
+            <h3>${isCombinedHandoverCorrection ? "Correct this combined handover" : `Correct this ${recordLabel} record`}</h3>
+            <p class="section-copy">${isCombinedHandoverCorrection ? "Each changed line is saved against its original stock-out record, while the handover form stays combined for the client." : isCreate ? "Create an audit-safe correction for item information keyed wrongly during creation." : "Create an audit-safe correction for inventory-issued items. Additional handover items are document-only and do not adjust stock balances."}</p>
           </div>
           <button type="button" class="button-link" data-cancel-correction>Cancel Correction</button>
         </div>
@@ -2476,6 +2478,7 @@ function renderCorrectionSection(record) {
           <table>
             <thead>
               <tr>
+                ${isCombinedHandoverCorrection ? "<th>Document</th>" : ""}
                 <th>Item</th>
                 <th>Stock Code</th>
                 ${isStockIn ? "<th>Correct Qty</th><th>Correct Category</th>" : "<th>Correct LC Issued</th><th>Correct Consignment Issued</th>"}
@@ -2483,7 +2486,8 @@ function renderCorrectionSection(record) {
             </thead>
             <tbody>
               ${balanceCorrectionRows.map((item, index) => `
-                <tr data-correction-row data-item-id="${escapeHtml(item.itemId ?? "")}">
+                <tr data-correction-row data-item-id="${escapeHtml(item.itemId ?? "")}" data-source-stock-out-id="${escapeHtml(item.sourceStockOutId ?? record.sourceId ?? "")}" data-correction-target-type="${escapeHtml(item.correctionTargetType ?? "stock-out")}" data-correction-target-id="${escapeHtml(item.correctionTargetId ?? item.sourceStockOutId ?? record.sourceId ?? "")}" data-source-row-index="${escapeHtml(String(item.sourceRowIndex ?? index))}">
+                  ${isCombinedHandoverCorrection ? `<td><strong>${escapeHtml(item.sourceDocumentNo ?? "-")}</strong></td>` : ""}
                   <td>
                     <strong>${escapeHtml(item.name)}</strong>
                     <br><span class="muted">${escapeHtml(item.brand ?? "-")} / ${escapeHtml(item.model ?? "-")}</span>
@@ -4770,6 +4774,43 @@ function renderStockPickerList(container, inventory, selectedId, searchTerm = ""
     return;
   }
 
+  if (options.layout === "draw") {
+    container.innerHTML = `
+      <div class="stock-picker-table" role="presentation">
+        <div class="stock-picker-table-head" aria-hidden="true">
+          <span>Description</span>
+          <span>Stock Code</span>
+          <span>Brand / Category</span>
+          <span>Location</span>
+          <span>LC</span>
+          <span>Consign</span>
+        </div>
+        ${availableItems.map((item) => {
+          const ownQuantity = Number(item.ownQuantity ?? item.quantity ?? 0);
+          const consignmentQuantity = Number(item.consignmentQuantity ?? 0);
+          const conditionLabel = formatStockConditionLabel(item.stockCondition);
+          const stockCode = item.sku ?? "-";
+          return `
+            <button type="button" class="stock-picker-option stock-picker-option-row${item.id === selectedId ? " is-selected" : ""}" data-stock-picker-option="${item.id}" role="option" aria-selected="${item.id === selectedId ? "true" : "false"}">
+              <span class="stock-picker-row-description">
+                <strong>${escapeHtml(getStockPickerDisplayName(item))}</strong>
+                <small>${escapeHtml(conditionLabel)}</small>
+              </span>
+              <span class="stock-picker-row-meta">
+                <span><em>Stock Code</em><strong>${escapeHtml(stockCode)}</strong></span>
+                <span><em>Brand / Category</em><strong>${escapeHtml(item.brand ?? "Generic")} / ${escapeHtml(item.model ?? item.category ?? "Standard")}</strong></span>
+                <span><em>Location</em><strong>${escapeHtml(item.location ?? "Main Store")}</strong></span>
+                <span><em>LC</em><strong class="stock-picker-row-qty stock-picker-row-qty-own">${ownQuantity}</strong></span>
+                <span><em>Consign</em><strong class="stock-picker-row-qty stock-picker-row-qty-consign">${consignmentQuantity}</strong></span>
+              </span>
+            </button>
+          `;
+        }).join("")}
+      </div>
+    `;
+    return;
+  }
+
   let currentGroup = "";
   container.innerHTML = availableItems.map((item) => {
     const groupLabel = String(item.model ?? "Other").trim() || "Other";
@@ -4841,7 +4882,7 @@ function updateConsignmentRestockNotice(notice, item) {
 }
 
 function normalizeStockOutItems(record, inventory) {
-  if (Array.isArray(record.items) && record.items.length) {
+  if (Array.isArray(record.items)) {
     return record.items.map((line) => ({
       ...line,
       ownQuantity: line.ownQuantity ?? line.quantity ?? 0,
@@ -4851,6 +4892,8 @@ function normalizeStockOutItems(record, inventory) {
       consignmentToRestock: line.consignmentToRestock ?? line.itemSnapshot?.consignmentToRestock ?? 0
     }));
   }
+
+  if (!record.itemId && !record.itemSnapshot) return [];
 
   const item = record.itemSnapshot ?? inventory.find((entry) => entry.id === record.itemId);
   return [{
@@ -4925,10 +4968,140 @@ function getCombinedHandoverContext(record, data) {
     },
     rootRecord,
     supplementRecords,
-    items: records.flatMap((entry) => normalizeStockOutItems(entry, data.inventory)),
+    items: records.flatMap((entry) => getEffectiveStockOutItems(entry, data)),
     manualItems: records.flatMap((entry) => normalizeStockOutManualItems(entry)),
     isCombined: supplementRecords.length > 0
   };
+}
+
+function getEffectiveStockOutItems(record, data) {
+  const items = normalizeStockOutItems(record, data.inventory);
+  const latestCorrection = getLatestCorrection(data, "stock-out", record?.id);
+  if (!latestCorrection) return items;
+
+  const correctedRows = (latestCorrection.itemRows ?? []).filter((row) => row.itemId);
+  return items.map((line, index) => {
+    const corrected = correctedRows[index];
+    if (corrected?.itemId && corrected.itemId !== line.itemId) return line;
+    if (!corrected) return line;
+    const ownQuantity = Number(corrected.correctedValues?.ownQuantity ?? corrected.ownQuantity ?? line.ownQuantity ?? line.quantity ?? 0);
+    const consignmentQuantity = Number(corrected.correctedValues?.consignmentQuantity ?? corrected.consignmentQuantity ?? line.consignmentQuantity ?? 0);
+    return {
+      ...line,
+      ownQuantity,
+      consignmentQuantity,
+      quantity: ownQuantity + consignmentQuantity
+    };
+  });
+}
+
+function getHandoverRevisionEvents(handoverContext, data) {
+  const records = [handoverContext.rootRecord, ...handoverContext.supplementRecords].filter(Boolean);
+  const events = [];
+
+  handoverContext.supplementRecords.forEach((record) => {
+    events.push({
+      type: "supplement",
+      createdAt: record.createdAt,
+      title: `Added items in ${record.documentNo ?? "supplement"}`,
+      detail: `${normalizeStockOutItems(record, data.inventory).length + normalizeStockOutManualItems(record).length} line item(s) added`,
+      href: `handover.html?id=${encodeURIComponent(handoverContext.rootRecord.id)}`
+    });
+  });
+
+  const correctionGroups = new Map();
+  records.forEach((record) => {
+    getCorrectionAuditChain(data, "stock-out", record.id).forEach((correction) => {
+      const key = correction.revisionBatchId || correction.id;
+      if (!correctionGroups.has(key)) {
+        correctionGroups.set(key, {
+          type: "correction",
+          batchId: correction.revisionBatchId ?? null,
+          createdAt: correction.createdAt,
+          title: correction.revisionBatchId ? "Grouped handover correction" : "Stock-out correction",
+          documents: new Set(),
+          correctionIds: [],
+          reason: correction.reason ?? "No reason provided"
+        });
+      }
+      const group = correctionGroups.get(key);
+      group.createdAt = new Date(correction.createdAt ?? 0) < new Date(group.createdAt ?? 0) ? correction.createdAt : group.createdAt;
+      group.documents.add(record.documentNo ?? record.id);
+      group.correctionIds.push(correction.id);
+    });
+  });
+
+  correctionGroups.forEach((group) => {
+    const documents = Array.from(group.documents);
+    events.push({
+      type: "correction",
+      createdAt: group.createdAt,
+      title: group.title,
+      detail: `${documents.join(", ")} | ${group.reason}`,
+      href: `activity-detail.html?type=correction&id=${encodeURIComponent(group.correctionIds[0])}`
+    });
+  });
+
+  return events.sort((a, b) => new Date(a.createdAt ?? 0) - new Date(b.createdAt ?? 0));
+}
+
+function renderHandoverRevisionList(events) {
+  if (!events.length) return "";
+  return `
+    <div class="handover-revision-list">
+      ${events.map((event) => `
+        <a class="handover-revision-chip handover-revision-chip-${escapeHtml(event.type)}" href="${escapeHtml(event.href)}">
+          <strong>${escapeHtml(event.title)}</strong>
+          <span>${escapeHtml(formatDateTime(event.createdAt))} | ${escapeHtml(event.detail)}</span>
+        </a>
+      `).join("")}
+    </div>
+  `;
+}
+
+function showHandoverRevisionHistoryDialog(handoverContext, data) {
+  const events = getHandoverRevisionEvents(handoverContext, data);
+  const modal = document.createElement("div");
+  modal.className = "confirm-modal handover-revision-modal";
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-labelledby", "handover-revision-title");
+  modal.innerHTML = `
+    <div class="confirm-modal-backdrop" data-revision-close></div>
+    <div class="confirm-dialog handover-revision-dialog">
+      <div class="confirm-dialog-header">
+        <div>
+          <p class="eyebrow">Internal History</p>
+          <h3 id="handover-revision-title">Revision history</h3>
+          <p class="section-copy">${events.length} update${events.length === 1 ? "" : "s"} linked to ${escapeHtml(handoverContext.displayRecord.documentNo ?? "this handover")}.</p>
+        </div>
+      </div>
+      ${events.length ? renderHandoverRevisionList(events) : `<div class="empty-state">No revisions have been linked to this handover.</div>`}
+      <div class="confirm-dialog-actions">
+        <button type="button" class="button-link" data-revision-close>Close</button>
+      </div>
+    </div>
+  `;
+
+  const close = () => {
+    document.removeEventListener("keydown", handleKeydown);
+    modal.classList.remove("is-open");
+    setTimeout(() => modal.remove(), 180);
+    document.body.classList.remove("modal-open");
+  };
+
+  function handleKeydown(event) {
+    if (event.key === "Escape") close();
+  }
+
+  document.body.append(modal);
+  document.body.classList.add("modal-open");
+  requestAnimationFrame(() => modal.classList.add("is-open"));
+  modal.querySelector("[data-revision-close]")?.focus();
+  modal.querySelectorAll("[data-revision-close]").forEach((element) => {
+    element.addEventListener("click", close);
+  });
+  document.addEventListener("keydown", handleKeydown);
 }
 
 function formatHandoverRemarksText(value) {
@@ -5510,6 +5683,7 @@ function getActivityDetailRecord(type, id, data) {
         isCreateCorrection
           ? { label: "Change Type", value: "Item information" }
           : { label: "Inventory Adjustment", value: formatAdjustmentBreakdownSummary(correction.itemRows) },
+        correction.revisionBatchId ? { label: "Revision Batch", value: correction.revisionBatchId } : null,
         { label: "Reason", value: correction.reason ?? "No reason provided" }
       ].filter(Boolean),
       itemRows: (correction.itemRows ?? []).map((row) => {
@@ -5555,6 +5729,72 @@ function getActivityDetailRecord(type, id, data) {
   }
 
   return null;
+}
+
+function getCombinedStockOutCorrectionRecord(rootStockOut, data) {
+  if (!rootStockOut) return null;
+  const context = getCombinedHandoverContext(rootStockOut, data);
+  const records = [context.rootRecord, ...context.supplementRecords].filter(Boolean);
+  const activityRecords = records
+    .map((stockOut) => {
+      const latestCorrection = getLatestCorrection(data, "stock-out", stockOut.id);
+      const targetType = latestCorrection ? "correction" : "stock-out";
+      const targetId = latestCorrection?.id ?? stockOut.id;
+      return {
+        stockOut,
+        activity: getActivityDetailRecord(targetType, targetId, data),
+        latestCorrection,
+        targetType,
+        targetId
+      };
+    })
+    .filter((entry) => entry.activity);
+  if (!activityRecords.length) return null;
+
+  const consignmentIssued = activityRecords.reduce((sum, entry) => {
+    return sum + (entry.activity.itemRows ?? []).reduce((lineSum, line) => lineSum + Number(line.consignmentQuantity || 0), 0);
+  }, 0);
+
+  return {
+    type: "stock-out",
+    sourceId: context.rootRecord.id,
+    title: "Combined Stock-Out Record",
+    actor: context.rootRecord.createdByName ?? "Unknown User",
+    createdAt: context.rootRecord.createdAt,
+    summary: context.rootRecord.projectTitle || context.rootRecord.documentNo,
+    detailRows: [
+      { label: "Document No", value: context.rootRecord.documentNo ?? "-" },
+      { label: "Linked Documents", value: records.map((entry) => entry.documentNo).filter(Boolean).join(", ") || "-" },
+      { label: "Project Title", value: context.rootRecord.projectTitle ?? "-" },
+      { label: "Received By", value: context.rootRecord.receivedBy ?? "-" },
+      ...(consignmentIssued ? [{ label: "Consignment Issued", value: consignmentIssued }] : [])
+    ],
+    itemRows: activityRecords.flatMap((entry) => (entry.activity.itemRows ?? []).map((line, index) => ({
+      ...line,
+      sourceStockOutId: entry.stockOut.id,
+      sourceDocumentNo: entry.stockOut.documentNo,
+      correctionTargetType: entry.targetType,
+      correctionTargetId: entry.targetId,
+      correctionTargetLabel: entry.latestCorrection ? "Latest correction" : "Original stock-out",
+      sourceRowIndex: index
+    }))),
+    balanceRows: activityRecords.flatMap((entry) => (entry.activity.balanceRows ?? []).map((row) => ({
+      ...row,
+      name: `${entry.stockOut.documentNo ?? "Handover"} | ${row.name}`
+    }))),
+    hasCorrection: false,
+    latestCorrectionId: null,
+    canCorrect: true,
+    handoverId: context.rootRecord.id,
+    isCombinedHandoverCorrection: true,
+    combinedStockOutIds: activityRecords.map((entry) => entry.stockOut.id),
+    combinedCorrectionTargets: activityRecords.map((entry) => ({
+      stockOutId: entry.stockOut.id,
+      documentNo: entry.stockOut.documentNo,
+      type: entry.targetType,
+      id: entry.targetId
+    }))
+  };
 }
 
 const HANDOVER_LOGO_SRC = "assets/links-creation-logo.png";
@@ -5873,6 +6113,59 @@ async function downloadHandoverFile(stockOutId) {
   printWindow.document.close();
 }
 
+function showReviseHandoverDialog({ documentNo, addHref, correctionHref }) {
+  const modal = document.createElement("div");
+  modal.className = "confirm-modal revise-handover-modal";
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-labelledby", "revise-handover-title");
+  modal.innerHTML = `
+    <div class="confirm-modal-backdrop" data-revise-close></div>
+    <div class="confirm-dialog revise-handover-dialog">
+      <div class="confirm-dialog-header">
+        <div>
+          <p class="eyebrow">Handover Revision</p>
+          <h3 id="revise-handover-title">Revise handover ${escapeHtml(documentNo ?? "")}</h3>
+          <p class="section-copy">Choose whether this handover needs extra missed items, or a correction to items that were already issued.</p>
+        </div>
+      </div>
+      <div class="revise-handover-options">
+        <a class="revise-handover-option" href="${escapeHtml(addHref)}">
+          <strong>Add missed items</strong>
+          <span>Create a linked supplementary draw-out and show the original plus add-on items together on the handover form.</span>
+        </a>
+        <a class="revise-handover-option" href="${escapeHtml(correctionHref)}">
+          <strong>Correct existing items</strong>
+          <span>Open the stock-out correction workflow for wrong quantities or wrongly keyed issued items.</span>
+        </a>
+      </div>
+      <div class="confirm-dialog-actions">
+        <button type="button" class="button-link" data-revise-close>Cancel</button>
+      </div>
+    </div>
+  `;
+
+  const close = () => {
+    document.removeEventListener("keydown", handleKeydown);
+    modal.classList.remove("is-open");
+    setTimeout(() => modal.remove(), 180);
+    document.body.classList.remove("modal-open");
+  };
+
+  function handleKeydown(event) {
+    if (event.key === "Escape") close();
+  }
+
+  document.body.append(modal);
+  document.body.classList.add("modal-open");
+  requestAnimationFrame(() => modal.classList.add("is-open"));
+  modal.querySelector(".revise-handover-option")?.focus();
+  modal.querySelectorAll("[data-revise-close]").forEach((element) => {
+    element.addEventListener("click", close);
+  });
+  document.addEventListener("keydown", handleKeydown);
+}
+
 async function applyActivityCorrection(type, id, form) {
   const data = loadData();
   const record = getActivityDetailRecord(type, id, data);
@@ -5933,6 +6226,81 @@ async function applyActivityCorrection(type, id, form) {
     return { ok: true, correctionId: result.correction?.id };
   } catch (error) {
     return { ok: false, message: error.message || "The correction could not be saved to the backend." };
+  }
+}
+
+async function applyCombinedHandoverCorrection(record, form) {
+  const data = loadData();
+  const currentUser = getCurrentUser();
+  const reason = form.querySelector("#correction-reason")?.value.trim() ?? "";
+  if (!reason) return { ok: false, message: "Enter a correction reason before saving." };
+  if (!canCorrectActivityKind("stock-out", currentUser)) {
+    return { ok: false, message: `You do not have permission to correct this stock-out record. Required role: ${getCorrectionPermissionLabel("stock-out")}.` };
+  }
+
+  const formRows = Array.from(form.querySelectorAll("[data-correction-row]"));
+  const targetRefs = Array.from(new Map(
+    formRows
+      .map((row) => ({
+        type: row.dataset.correctionTargetType || "stock-out",
+        id: row.dataset.correctionTargetId || row.dataset.sourceStockOutId || ""
+      }))
+      .filter((entry) => entry.id)
+      .map((entry) => [`${entry.type}:${entry.id}`, entry])
+  ).values());
+  const correctionJobs = [];
+
+  for (const target of targetRefs) {
+    const sourceRecord = getActivityDetailRecord(target.type, target.id, data);
+    if (!sourceRecord) return { ok: false, message: "One linked correction target could not be found." };
+
+    const sourceRows = getBalanceCorrectionRows(sourceRecord);
+    const rows = [];
+    let hasChanges = false;
+
+    sourceRows.forEach((sourceRow, sourceIndex) => {
+      const rowElement = formRows.find((row) =>
+        (row.dataset.correctionTargetType || "stock-out") === target.type
+        && (row.dataset.correctionTargetId || row.dataset.sourceStockOutId) === target.id
+        && Number(row.dataset.sourceRowIndex ?? -1) === sourceIndex
+      );
+      const correctedOwn = Math.max(Number(rowElement?.querySelector('input[name^="correctOwn-"]')?.value ?? sourceRow.ownQuantity ?? 0), 0);
+      const correctedConsignment = Math.max(Number(rowElement?.querySelector('input[name^="correctConsignment-"]')?.value ?? sourceRow.consignmentQuantity ?? 0), 0);
+      if (correctedOwn !== Number(sourceRow.ownQuantity ?? 0) || correctedConsignment !== Number(sourceRow.consignmentQuantity ?? 0)) {
+        hasChanges = true;
+      }
+      rows.push({
+        correctedValues: {
+          ownQuantity: correctedOwn,
+          consignmentQuantity: correctedConsignment
+        }
+      });
+    });
+
+    if (hasChanges) {
+      correctionJobs.push({ target, rows });
+    }
+  }
+
+  if (!correctionJobs.length) return { ok: false, message: "No correction changes were entered." };
+  const revisionBatchId = `handover-revision-${record.handoverId || "unknown"}-${Date.now().toString(36)}`;
+
+  try {
+    const corrections = [];
+    for (const job of correctionJobs) {
+      const result = await sendBackendAction("correct-activity", {
+        type: job.target.type,
+        id: job.target.id,
+        reason,
+        rows: job.rows,
+        revisionBatchId,
+        privateAudit: isMasterUser(currentUser)
+      });
+      corrections.push(result.correction);
+    }
+    return { ok: true, corrections, handoverId: form.dataset.combinedHandoverId || record.handoverId };
+  } catch (error) {
+    return { ok: false, message: error.message || "The combined correction could not be saved to the backend." };
   }
 }
 
@@ -7421,10 +7789,19 @@ function initDrawStockPage() {
     if (projectTitleInput) projectTitleInput.value = supplementParentRecord.projectTitle ?? "";
     if (receiverInput) receiverInput.value = supplementParentRecord.receivedBy ?? "";
     setHandoverTypeValue(supplementParentRecord.handoverType === "internal" ? "internal" : "external");
+    stockOutForm.dataset.supplementMode = "true";
+    if (projectTitleInput) projectTitleInput.readOnly = true;
+    if (receiverInput) {
+      receiverInput.readOnly = true;
+      receiverInput.setAttribute("aria-readonly", "true");
+    }
+    stockOutForm.querySelectorAll('input[name="handoverType"]').forEach((input) => {
+      input.setAttribute("aria-disabled", "true");
+    });
     stockOutForm.insertAdjacentHTML("afterbegin", `
       <div class="supplement-draw-banner">
         <strong>Supplementary draw for ${escapeHtml(supplementParentRecord.documentNo ?? "original handover")}</strong>
-        <span>Add only the missed items. A linked add-on handover will be created.</span>
+        <span>Add only the missed items. Receiving details are locked to match the original handover.</span>
       </div>
     `);
   }
@@ -7457,8 +7834,20 @@ function initDrawStockPage() {
 
   const renderDrawStockPicker = (inventory, selectedId = stockOutItemSelect.value) => {
     renderStockPickerList(stockPickerList, inventory, selectedId, stockPickerSearch?.value ?? "", {
-      filter: getActiveStockPickerFilter()
+      filter: getActiveStockPickerFilter(),
+      layout: "draw"
     });
+  };
+
+  const focusDrawStockPickerOption = (direction) => {
+    if (!stockPickerList) return;
+    const options = Array.from(stockPickerList.querySelectorAll("[data-stock-picker-option]"));
+    if (!options.length) return;
+    const activeIndex = options.indexOf(document.activeElement);
+    const selectedIndex = options.findIndex((option) => option.getAttribute("aria-selected") === "true");
+    const baseIndex = activeIndex >= 0 ? activeIndex : selectedIndex >= 0 ? selectedIndex : direction > 0 ? -1 : 0;
+    const nextIndex = (baseIndex + direction + options.length) % options.length;
+    options[nextIndex].focus();
   };
 
   const refreshDrawStockOptions = () => {
@@ -7637,6 +8026,18 @@ function initDrawStockPage() {
       renderDrawStockPicker(currentData.inventory);
     });
 
+    const selectDrawStockPickerOption = (itemId) => {
+      const currentData = loadData();
+      const selectedItem = currentData.inventory.find((item) => item.id === itemId);
+      if (!selectedItem) return;
+      stockOutItemSelect.value = selectedItem.id;
+      updateStockPickerButton(stockPickerButton, selectedItem);
+      updateStockOutSourceOptions(selectedItem);
+      renderDrawStockPicker(currentData.inventory, selectedItem.id);
+      setStockPickerOpen(false);
+      stockPickerButton?.focus();
+    };
+
     stockPickerFilterButtons.forEach((button) => {
       button.addEventListener("click", () => {
         stockPickerFilterButtons.forEach((control) => {
@@ -7652,14 +8053,23 @@ function initDrawStockPage() {
     stockPickerList?.addEventListener("click", (event) => {
       const option = event.target.closest("[data-stock-picker-option]");
       if (!option) return;
-      const currentData = loadData();
-      const selectedItem = currentData.inventory.find((item) => item.id === option.dataset.stockPickerOption);
-      if (!selectedItem) return;
-      stockOutItemSelect.value = selectedItem.id;
-      updateStockPickerButton(stockPickerButton, selectedItem);
-      updateStockOutSourceOptions(selectedItem);
-      renderDrawStockPicker(currentData.inventory, selectedItem.id);
-      setStockPickerOpen(false);
+      selectDrawStockPickerOption(option.dataset.stockPickerOption);
+    });
+
+    stockPickerList?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const option = event.target.closest("[data-stock-picker-option]");
+        if (option) selectDrawStockPickerOption(option.dataset.stockPickerOption);
+      }
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        focusDrawStockPickerOption(event.key === "ArrowDown" ? 1 : -1);
+      }
+      if (event.key === "Escape") {
+        setStockPickerOpen(false);
+        stockPickerButton?.focus();
+      }
     });
 
     document.addEventListener("click", (event) => {
@@ -7671,6 +8081,17 @@ function initDrawStockPage() {
       if (event.key === "Escape") {
         setStockPickerOpen(false);
         stockPickerButton?.focus();
+      }
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        focusDrawStockPickerOption(event.key === "ArrowDown" ? 1 : -1);
+      }
+      if (event.key === "Enter") {
+        const firstOption = stockPickerList?.querySelector("[data-stock-picker-option]");
+        if (firstOption) {
+          event.preventDefault();
+          selectDrawStockPickerOption(firstOption.dataset.stockPickerOption);
+        }
       }
     });
 
@@ -7715,11 +8136,13 @@ function initDrawStockPage() {
     };
 
     receiverInput?.addEventListener("focus", () => {
+      if (stockOutForm.dataset.supplementMode === "true") return;
       filterReceiverOptions();
       setReceiverPickerOpen(true);
     });
 
     receiverInput?.addEventListener("input", () => {
+      if (stockOutForm.dataset.supplementMode === "true") return;
       filterReceiverOptions();
       setReceiverPickerOpen(true);
     });
@@ -7731,6 +8154,7 @@ function initDrawStockPage() {
     });
 
     receiverPickerList?.addEventListener("click", (event) => {
+      if (stockOutForm.dataset.supplementMode === "true") return;
       const option = event.target.closest("[data-receiver-option]");
       if (!option || !receiverInput) return;
       receiverInput.value = option.dataset.receiverOption;
@@ -7745,7 +8169,17 @@ function initDrawStockPage() {
     });
 
     stockOutForm.querySelectorAll('input[name="handoverType"]').forEach((input) => {
-      input.addEventListener("change", syncHandoverReceiver);
+      input.addEventListener("click", (event) => {
+        if (stockOutForm.dataset.supplementMode !== "true") return;
+        event.preventDefault();
+      });
+      input.addEventListener("change", () => {
+        if (stockOutForm.dataset.supplementMode === "true" && supplementParentRecord) {
+          setHandoverTypeValue(supplementParentRecord.handoverType === "internal" ? "internal" : "external");
+          return;
+        }
+        syncHandoverReceiver();
+      });
     });
 
     stockOutForm.addEventListener("click", (event) => {
@@ -7902,12 +8336,14 @@ function renderHandoverPage() {
   const { displayRecord, rootRecord, items, manualItems, isCombined } = handoverContext;
   const parentRecord = record.parentStockOutId ? rootRecord : null;
   const supplementTargetId = rootRecord?.id ?? record.id;
+  const revisionEvents = getHandoverRevisionEvents(handoverContext, data);
   container.innerHTML = `
     <div class="toolbar">
       ${isCombined ? `<span class="toolbar-note">Combined view</span>` : ""}
       <button class="button-link" type="button" onclick="window.print()">Print</button>
       <button class="button-link" type="button" id="handover-download">${isCombined ? "Download Combined PDF" : "Download PDF"}</button>
-      <a class="button-link" href="draw-stock.html?supplementFor=${encodeURIComponent(supplementTargetId)}">Add More Items</a>
+      ${revisionEvents.length ? `<button class="button-link" type="button" id="handover-revision-history">Revision History</button>` : ""}
+      <button class="button-link" type="button" id="handover-revise">Revise Handover</button>
     </div>
     ${buildHandoverDocumentMarkup(displayRecord, items, manualItems, { parentRecord })}
   `;
@@ -7917,17 +8353,44 @@ function renderHandoverPage() {
     downloadButton.addEventListener("click", () => downloadHandoverFile(stockOutId));
     downloadButton.dataset.bound = "true";
   }
+
+  const reviseButton = document.querySelector("#handover-revise");
+  if (reviseButton && !reviseButton.dataset.bound) {
+    reviseButton.addEventListener("click", () => {
+      showReviseHandoverDialog({
+        documentNo: displayRecord.documentNo,
+        addHref: `draw-stock.html?supplementFor=${encodeURIComponent(supplementTargetId)}`,
+        correctionHref: `activity-detail.html?type=stock-out&id=${encodeURIComponent(supplementTargetId)}&mode=combined-handover`
+      });
+    });
+    reviseButton.dataset.bound = "true";
+  }
+
+  const revisionButton = document.querySelector("#handover-revision-history");
+  if (revisionButton && !revisionButton.dataset.bound) {
+    revisionButton.addEventListener("click", () => {
+      showHandoverRevisionHistoryDialog(handoverContext, data);
+    });
+    revisionButton.dataset.bound = "true";
+  }
 }
 
 function renderActivityDetailPage() {
   const params = new URLSearchParams(window.location.search);
   const type = params.get("type");
   const id = params.get("id");
+  const isCombinedHandoverCorrection = type === "stock-out" && params.get("mode") === "combined-handover";
   const container = document.querySelector("#activity-detail-shell");
   if (!type || !id || !container) return;
 
   const data = loadData();
-  const record = getActivityDetailRecord(type, id, data);
+  const baseRecord = getActivityDetailRecord(type, id, data);
+  const stockOutRecord = type === "stock-out"
+    ? data.stockOuts.find((entry) => entry.id === id)
+    : null;
+  const record = isCombinedHandoverCorrection && stockOutRecord
+    ? getCombinedStockOutCorrectionRecord(getRootStockOutRecord(stockOutRecord, data.stockOuts), data)
+    : baseRecord;
   if (!record) {
     container.innerHTML = `<div class="empty-state">The requested activity record could not be found.</div>`;
     return;
@@ -8030,13 +8493,20 @@ function renderActivityDetailPage() {
       event.preventDefault();
       const confirmed = await showCorrectionConfirmationDialog(record, correctionForm);
       if (!confirmed) return;
-      const result = await applyActivityCorrection(type, id, correctionForm);
+      const result = correctionForm.dataset.combinedHandoverCorrection === "true"
+        ? await applyCombinedHandoverCorrection(record, correctionForm)
+        : await applyActivityCorrection(type, id, correctionForm);
       if (!result.ok) {
         showNotice(correctionForm, result.message);
         return;
       }
-      queueToast("Correction saved and audit record created.");
-      window.location.href = `activity-detail.html?type=correction&id=${encodeURIComponent(result.correctionId)}`;
+      if (correctionForm.dataset.combinedHandoverCorrection === "true") {
+        queueToast(`Combined handover correction saved across ${result.corrections?.length ?? 1} record${result.corrections?.length === 1 ? "" : "s"}.`);
+        window.location.href = `handover.html?id=${encodeURIComponent(result.handoverId || id)}`;
+      } else {
+        queueToast("Correction saved and audit record created.");
+        window.location.href = `activity-detail.html?type=correction&id=${encodeURIComponent(result.correctionId)}`;
+      }
     });
     correctionForm.dataset.bound = "true";
   }

@@ -4701,6 +4701,139 @@ body[data-page="draw-stock"] .stock-picker-button {
   background: rgba(164, 74, 63, 0.12);
 }
 
+.stock-picker-table {
+  display: grid;
+  min-width: 620px;
+  border: 1px solid rgba(22, 58, 99, 0.12);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.stock-picker-table-head {
+  display: none;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 8px 12px;
+  background: #eef3f8;
+  color: #52627a;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.stock-picker-option-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 0;
+  border-top: 1px solid rgba(22, 58, 99, 0.08);
+  border-radius: 0;
+  color: #1f2d45;
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.stock-picker-option-row:hover,
+.stock-picker-option-row:focus,
+.stock-picker-option-row.is-selected {
+  background: #f4f7ff;
+  box-shadow: inset 3px 0 0 #2f6df6;
+  outline: none;
+}
+
+.stock-picker-row-description {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.stock-picker-option-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-picker-row-description strong {
+  display: block;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  line-height: 1.28;
+}
+
+.stock-picker-row-meta {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.75fr) minmax(170px, 1.4fr) minmax(90px, 0.7fr) 52px 68px;
+  gap: 10px;
+  align-items: end;
+  color: #52627a;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.stock-picker-row-meta span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.stock-picker-row-meta em {
+  color: #7b8799;
+  font-size: 0.62rem;
+  font-style: normal;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.stock-picker-row-meta strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #1f2d45;
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-picker-row-description small {
+  color: #6b7890;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.stock-picker-row-code {
+  color: #17345c;
+  font-weight: 900;
+}
+
+.stock-picker-row-qty {
+  justify-self: start;
+  min-width: 34px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.stock-picker-row-qty-own {
+  background: var(--stock-lc-soft);
+  color: var(--stock-lc);
+}
+
+.stock-picker-row-qty-consign {
+  background: var(--stock-consign-soft);
+  color: var(--stock-consign);
+}
+
 .stock-picker-empty {
   padding: 18px;
   border-radius: 14px;
@@ -6123,6 +6256,46 @@ tbody tr:hover {
   padding-top: 4px;
 }
 
+.revise-handover-dialog {
+  width: min(620px, 100%);
+}
+
+.revise-handover-options {
+  display: grid;
+  gap: 12px;
+}
+
+.revise-handover-option {
+  display: grid;
+  gap: 5px;
+  padding: 16px;
+  border: 1px solid rgba(22, 58, 99, 0.12);
+  border-radius: 14px;
+  background: #ffffff;
+  color: var(--navy);
+  text-decoration: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.revise-handover-option:hover,
+.revise-handover-option:focus {
+  border-color: rgba(47, 109, 246, 0.38);
+  box-shadow: 0 12px 28px rgba(22, 58, 99, 0.12);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.revise-handover-option strong {
+  font-size: 0.96rem;
+}
+
+.revise-handover-option span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
 .create-stock-confirm-dialog {
   width: min(720px, 100%);
   gap: 16px;
@@ -6738,6 +6911,51 @@ body.modal-open .modal-backdrop {
   font-weight: 750;
 }
 
+.handover-revision-dialog {
+  width: min(680px, 100%);
+}
+
+.handover-revision-list {
+  display: grid;
+  gap: 8px;
+}
+
+.handover-revision-chip {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid rgba(22, 58, 99, 0.1);
+  border-left: 4px solid #2f6df6;
+  border-radius: 10px;
+  color: var(--navy);
+  text-decoration: none;
+  background: #f8fafc;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.handover-revision-chip:hover,
+.handover-revision-chip:focus {
+  border-color: rgba(47, 109, 246, 0.34);
+  box-shadow: 0 10px 24px rgba(22, 58, 99, 0.1);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.handover-revision-chip-supplement {
+  border-left-color: #2c7a7b;
+}
+
+.handover-revision-chip-correction {
+  border-left-color: #9a6b24;
+}
+
+.handover-revision-chip span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
 @media (max-width: 1120px) {
   .app-shell {
     display: block;
@@ -6930,6 +7148,10 @@ body.modal-open .modal-backdrop {
   .app-shell {
     padding: 16px;
     gap: 16px;
+  }
+
+  .stock-picker-table {
+    min-width: 560px;
   }
 
   .home-shell {
@@ -7202,7 +7424,8 @@ body.modal-open .modal-backdrop {
   }
 
   body::before,
-  .toolbar {
+  .toolbar,
+  .handover-revision-modal {
     display: none;
   }
 
@@ -8617,6 +8840,25 @@ body[data-page="draw-stock"] .receiver-picker-list {
   z-index: 500;
 }
 
+body[data-page="draw-stock"] .stock-picker-list {
+  display: block;
+  flex: 1 1 auto;
+  min-height: 180px;
+  max-height: min(430px, calc(100vh - 310px));
+  overflow-x: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 0;
+  scrollbar-width: auto;
+}
+
+body[data-page="draw-stock"] .stock-picker-popover {
+  display: flex;
+  flex-direction: column;
+  max-height: min(620px, calc(100vh - 150px));
+  overflow: hidden;
+}
+
 body[data-page="draw-stock"] .stock-picker-button {
   padding-left: 42px;
 }
@@ -8768,6 +9010,20 @@ body[data-page="draw-stock"] .supplement-draw-banner strong {
   color: #17345c;
   font-size: 0.88rem;
   font-weight: 850;
+}
+
+body[data-page="draw-stock"] #stock-out-form[data-supplement-mode="true"] input[readonly] {
+  background-color: #f2f6fb;
+  color: #31415b;
+  cursor: not-allowed;
+}
+
+body[data-page="draw-stock"] #stock-out-form[data-supplement-mode="true"] .handover-type-toggle label {
+  cursor: not-allowed;
+}
+
+body[data-page="draw-stock"] #stock-out-form[data-supplement-mode="true"] .handover-type-toggle label:not(:has(input:checked)) {
+  opacity: 0.58;
 }
 
 body[data-page="draw-stock"] .handover-type-field {
