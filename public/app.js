@@ -723,6 +723,8 @@ function normalizeStockOutRecord(entry) {
   return {
     ...entry,
     handoverType: entry.handoverType === "internal" ? "internal" : "external",
+    parentStockOutId: entry.parentStockOutId ?? null,
+    supplementNumber: entry.supplementNumber ?? null,
     createdByName: entry.createdByName ?? entry.createdBy?.name ?? "Unknown User",
     createdByUserId: entry.createdByUserId ?? entry.createdBy?.userId ?? null
   };
@@ -1490,7 +1492,7 @@ function showStockOutConfirmationDialog(lines, details) {
         <section class="confirm-category-section confirm-category-lc">
           <div class="confirm-category-header">
             <h4>${escapeHtml(details.projectTitle || "Stock withdrawal")}</h4>
-            <span>${details.handoverType === "internal" ? "Internal" : "External"} handover | Received by ${escapeHtml(details.receivedBy || "-")}</span>
+            <span>${details.supplementForDocumentNo ? `Supplement to ${escapeHtml(details.supplementForDocumentNo)} | ` : ""}${details.handoverType === "internal" ? "Internal" : "External"} handover | Received by ${escapeHtml(details.receivedBy || "-")}</span>
           </div>
           <div class="confirm-line-list">
             ${lines.map((line) => `
@@ -4890,6 +4892,45 @@ function normalizeStockOutManualItems(record) {
   }));
 }
 
+function getRootStockOutRecord(record, stockOuts) {
+  if (!record?.parentStockOutId) return record;
+  return stockOuts.find((entry) => entry.id === record.parentStockOutId) ?? record;
+}
+
+function getSupplementStockOutRecords(rootRecord, stockOuts) {
+  if (!rootRecord) return [];
+  const rootDocumentNo = String(rootRecord.documentNo ?? "").trim();
+  const escapedRootDocumentNo = rootDocumentNo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const supplementDocumentPattern = rootDocumentNo
+    ? new RegExp(`^${escapedRootDocumentNo}-A\\d+$`)
+    : null;
+  return stockOuts
+    .filter((entry) => entry.parentStockOutId === rootRecord.id || supplementDocumentPattern?.test(String(entry.documentNo ?? "")))
+    .sort((a, b) => {
+      const supplementDelta = Number(a.supplementNumber ?? 0) - Number(b.supplementNumber ?? 0);
+      if (supplementDelta) return supplementDelta;
+      return new Date(a.createdAt ?? 0) - new Date(b.createdAt ?? 0);
+    });
+}
+
+function getCombinedHandoverContext(record, data) {
+  const stockOuts = data.stockOuts ?? [];
+  const rootRecord = getRootStockOutRecord(record, stockOuts);
+  const supplementRecords = getSupplementStockOutRecords(rootRecord, stockOuts);
+  const records = [rootRecord, ...supplementRecords].filter(Boolean);
+  return {
+    displayRecord: {
+      ...rootRecord,
+      combinedSupplementDocumentNos: supplementRecords.map((entry) => entry.documentNo).filter(Boolean)
+    },
+    rootRecord,
+    supplementRecords,
+    items: records.flatMap((entry) => normalizeStockOutItems(entry, data.inventory)),
+    manualItems: records.flatMap((entry) => normalizeStockOutManualItems(entry)),
+    isCombined: supplementRecords.length > 0
+  };
+}
+
 function formatHandoverRemarksText(value) {
   const text = String(value ?? "").replace(/\r\n?/g, "\n").trim();
   if (!text) return "-";
@@ -5581,6 +5622,7 @@ function paginateHandoverRows(rows) {
 function buildHandoverDocumentMarkup(record, items, manualItems = [], options = {}) {
   const logoSrc = options.logoSrc || HANDOVER_LOGO_SRC;
   const signatureSrcs = options.signatureSrcs || {};
+  const parentRecord = options.parentRecord || null;
   const isInternalHandover = record.handoverType === "internal";
   const showRemarksColumn = manualItems.some((line) => hasHandoverRemarksText(line.remarks));
   const handoverRows = [
@@ -5773,8 +5815,9 @@ async function downloadHandoverFile(stockOutId) {
     return;
   }
 
-  const items = normalizeStockOutItems(record, data.inventory);
-  const manualItems = normalizeStockOutManualItems(record);
+  const handoverContext = getCombinedHandoverContext(record, data);
+  const { displayRecord, rootRecord, items, manualItems } = handoverContext;
+  const parentRecord = record.parentStockOutId ? rootRecord : null;
   let logoSrc = HANDOVER_LOGO_SRC;
   const signatureSrcs = {};
   try {
@@ -5783,8 +5826,8 @@ async function downloadHandoverFile(stockOutId) {
     console.warn("Could not embed handover logo in downloaded file:", error);
   }
   const requiredSignatureNames = [
-    record.createdByName,
-    record.handoverType === "internal" ? record.receivedBy : ""
+    displayRecord.createdByName,
+    displayRecord.handoverType === "internal" ? displayRecord.receivedBy : ""
   ].map((name) => normalizeSignatureName(name));
   for (const signature of INTERNAL_SIGNATURE_ASSETS) {
     if (!requiredSignatureNames.includes(normalizeSignatureName(signature.name))) continue;
@@ -5794,7 +5837,7 @@ async function downloadHandoverFile(stockOutId) {
       console.warn(`Could not embed signature asset for ${signature.name}:`, error);
     }
   }
-  const documentMarkup = buildHandoverDocumentMarkup(record, items, manualItems, { logoSrc, signatureSrcs });
+  const documentMarkup = buildHandoverDocumentMarkup(displayRecord, items, manualItems, { logoSrc, signatureSrcs, parentRecord });
   const stylesheetText = Array.from(document.styleSheets)
     .map((styleSheet) => {
       try {
@@ -5810,7 +5853,7 @@ async function downloadHandoverFile(stockOutId) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(record.documentNo)} | Material Handover Form</title>
+  <title>${escapeHtml(displayRecord.documentNo)} | Material Handover Form</title>
   <style>${stylesheetText}</style>
 </head>
 <body class="print-page">
@@ -7357,6 +7400,34 @@ function initDrawStockPage() {
     return;
   }
   bindUppercaseInput(manualUnitInput);
+  const supplementForId = new URLSearchParams(window.location.search).get("supplementFor");
+  const getSupplementParentRecord = () => {
+    if (!supplementForId) return null;
+    const records = loadData().stockOuts ?? [];
+    const selectedRecord = records.find((record) => record.id === supplementForId);
+    if (!selectedRecord) return null;
+    return selectedRecord.parentStockOutId
+      ? records.find((record) => record.id === selectedRecord.parentStockOutId) ?? selectedRecord
+      : selectedRecord;
+  };
+  const supplementParentRecord = getSupplementParentRecord();
+  const projectTitleInput = stockOutForm.querySelector('input[name="projectTitle"]');
+  const setHandoverTypeValue = (handoverType) => {
+    stockOutForm.querySelectorAll('input[name="handoverType"]').forEach((input) => {
+      input.checked = input.value === handoverType;
+    });
+  };
+  if (supplementForId && supplementParentRecord) {
+    if (projectTitleInput) projectTitleInput.value = supplementParentRecord.projectTitle ?? "";
+    if (receiverInput) receiverInput.value = supplementParentRecord.receivedBy ?? "";
+    setHandoverTypeValue(supplementParentRecord.handoverType === "internal" ? "internal" : "external");
+    stockOutForm.insertAdjacentHTML("afterbegin", `
+      <div class="supplement-draw-banner">
+        <strong>Supplementary draw for ${escapeHtml(supplementParentRecord.documentNo ?? "original handover")}</strong>
+        <span>Add only the missed items. A linked add-on handover will be created.</span>
+      </div>
+    `);
+  }
 
   const updateStockOutSourceOptions = (item) => {
     if (!stockOutSourceSelect || !("options" in stockOutSourceSelect)) return;
@@ -7711,6 +7782,7 @@ function initDrawStockPage() {
       const nextData = loadData();
       const currentUser = getCurrentUser();
       const handoverType = form.get("handoverType") === "internal" ? "internal" : "external";
+      const activeSupplementParentRecord = getSupplementParentRecord();
       const lineItems = Array.from(stockOutForm.querySelectorAll("[data-stock-out-item-row]"))
         .filter((line) => line.dataset.issueSource !== "manual")
         .map((line) => ({
@@ -7778,7 +7850,8 @@ function initDrawStockPage() {
       const confirmed = await showStockOutConfirmationDialog(confirmationLines, {
         projectTitle: form.get("projectTitle").trim(),
         receivedBy: form.get("receivedBy").trim(),
-        handoverType
+        handoverType,
+        supplementForDocumentNo: activeSupplementParentRecord?.documentNo ?? ""
       });
       if (!confirmed) return;
 
@@ -7788,6 +7861,7 @@ function initDrawStockPage() {
           projectTitle: form.get("projectTitle").trim(),
           receivedBy: form.get("receivedBy").trim(),
           handoverType,
+          parentStockOutId: activeSupplementParentRecord?.id ?? null,
           lines: lineItems,
           manualItems
         });
@@ -7805,7 +7879,8 @@ function initDrawStockPage() {
       }
       refreshDrawStockOptions();
       showToast(`Stock withdrawn by ${getUserDisplayName(currentUser)}. Handover form ${stockOutRecord.documentNo} created.${totalConsignmentIssued ? ` ${totalConsignmentIssued} consignment item(s) must be restocked.` : ""}`);
-      window.open(`handover.html?id=${encodeURIComponent(stockOutRecord.id)}`, "_blank", "noopener");
+      const handoverViewId = activeSupplementParentRecord?.id ?? stockOutRecord.id;
+      window.open(`handover.html?id=${encodeURIComponent(handoverViewId)}`, "_blank", "noopener");
     });
     stockOutForm.dataset.bound = "true";
   }
@@ -7823,14 +7898,18 @@ function renderHandoverPage() {
     return;
   }
 
-  const items = normalizeStockOutItems(record, data.inventory);
-  const manualItems = normalizeStockOutManualItems(record);
+  const handoverContext = getCombinedHandoverContext(record, data);
+  const { displayRecord, rootRecord, items, manualItems, isCombined } = handoverContext;
+  const parentRecord = record.parentStockOutId ? rootRecord : null;
+  const supplementTargetId = rootRecord?.id ?? record.id;
   container.innerHTML = `
     <div class="toolbar">
+      ${isCombined ? `<span class="toolbar-note">Combined view</span>` : ""}
       <button class="button-link" type="button" onclick="window.print()">Print</button>
-      <button class="button-link" type="button" id="handover-download">Download PDF</button>
+      <button class="button-link" type="button" id="handover-download">${isCombined ? "Download Combined PDF" : "Download PDF"}</button>
+      <a class="button-link" href="draw-stock.html?supplementFor=${encodeURIComponent(supplementTargetId)}">Add More Items</a>
     </div>
-    ${buildHandoverDocumentMarkup(record, items, manualItems)}
+    ${buildHandoverDocumentMarkup(displayRecord, items, manualItems, { parentRecord })}
   `;
 
   const downloadButton = document.querySelector("#handover-download");

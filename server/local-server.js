@@ -287,6 +287,8 @@ async function initializeDatabase() {
       project_title TEXT NOT NULL,
       received_by TEXT NOT NULL,
       handover_type TEXT NOT NULL DEFAULT 'external',
+      parent_stock_out_id TEXT,
+      supplement_number INTEGER,
       created_at TIMESTAMPTZ,
       created_by_user_id TEXT,
       created_by_name TEXT
@@ -418,6 +420,12 @@ async function initializeDatabase() {
       ALTER TABLE stock_outs
         ADD COLUMN IF NOT EXISTS handover_type TEXT NOT NULL DEFAULT 'external';
 
+      ALTER TABLE stock_outs
+        ADD COLUMN IF NOT EXISTS parent_stock_out_id TEXT;
+
+      ALTER TABLE stock_outs
+        ADD COLUMN IF NOT EXISTS supplement_number INTEGER;
+
       UPDATE inventory_items
       SET unit = 'PCS'
       WHERE upper(trim(unit)) = 'PC';
@@ -474,6 +482,12 @@ async function initializeDatabase() {
           CHECK (handover_type IN ('external', 'internal')) NOT VALID;
       END IF;
 
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stock_outs_supplement_number_check') THEN
+        ALTER TABLE stock_outs
+          ADD CONSTRAINT stock_outs_supplement_number_check
+          CHECK (supplement_number IS NULL OR supplement_number > 0) NOT VALID;
+      END IF;
+
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stock_out_items_quantity_check') THEN
         ALTER TABLE stock_out_items
           ADD CONSTRAINT stock_out_items_quantity_check
@@ -519,6 +533,12 @@ async function initializeDatabase() {
         ALTER TABLE stock_outs
           ADD CONSTRAINT stock_outs_created_by_user_fk
           FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL NOT VALID;
+      END IF;
+
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stock_outs_parent_stock_out_fk') THEN
+        ALTER TABLE stock_outs
+          ADD CONSTRAINT stock_outs_parent_stock_out_fk
+          FOREIGN KEY (parent_stock_out_id) REFERENCES stock_outs(id) ON DELETE SET NULL NOT VALID;
       END IF;
 
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stock_relocations_actor_user_fk') THEN
@@ -904,6 +924,8 @@ async function loadStateFromRelational(client = pool) {
       projectTitle: row.project_title,
       receivedBy: row.received_by,
       handoverType: row.handover_type === "internal" ? "internal" : "external",
+      parentStockOutId: row.parent_stock_out_id,
+      supplementNumber: row.supplement_number === null ? undefined : Number(row.supplement_number),
       createdAt: toIsoValue(row.created_at),
       createdByUserId: row.created_by_user_id,
       createdByName: row.created_by_name
@@ -1011,11 +1033,24 @@ async function replaceRelationalState(client, data) {
     );
   }
 
-  for (const stockOut of normalized.stockOuts) {
+  const stockOutsById = new Map(normalized.stockOuts.map((stockOut) => [stockOut.id, stockOut]));
+  const orderedStockOuts = [...normalized.stockOuts].sort((a, b) => {
+    if (a.parentStockOutId === b.id) return 1;
+    if (b.parentStockOutId === a.id) return -1;
+    const aHasParent = a.parentStockOutId && stockOutsById.has(a.parentStockOutId);
+    const bHasParent = b.parentStockOutId && stockOutsById.has(b.parentStockOutId);
+    if (aHasParent !== bHasParent) return aHasParent ? 1 : -1;
+    return new Date(a.createdAt ?? 0) - new Date(b.createdAt ?? 0);
+  });
+
+  for (const stockOut of orderedStockOuts) {
     await client.query(
       `
-        INSERT INTO stock_outs (id, document_no, project_title, received_by, handover_type, created_at, created_by_user_id, created_by_name)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        INSERT INTO stock_outs (
+          id, document_no, project_title, received_by, handover_type,
+          parent_stock_out_id, supplement_number, created_at, created_by_user_id, created_by_name
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       `,
       [
         stockOut.id,
@@ -1023,6 +1058,8 @@ async function replaceRelationalState(client, data) {
         stockOut.projectTitle ?? "",
         stockOut.receivedBy ?? "",
         stockOut.handoverType === "internal" ? "internal" : "external",
+        stockOut.parentStockOutId ?? null,
+        stockOut.supplementNumber ?? null,
         toTimestampValue(stockOut.createdAt),
         stockOut.createdByUserId ?? null,
         stockOut.createdByName ?? null
@@ -1292,8 +1329,11 @@ async function insertAdjustment(client, adjustment) {
 async function insertStockOut(client, stockOut) {
   await client.query(
     `
-      INSERT INTO stock_outs (id, document_no, project_title, received_by, handover_type, created_at, created_by_user_id, created_by_name)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      INSERT INTO stock_outs (
+        id, document_no, project_title, received_by, handover_type,
+        parent_stock_out_id, supplement_number, created_at, created_by_user_id, created_by_name
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     `,
     [
       stockOut.id,
@@ -1301,6 +1341,8 @@ async function insertStockOut(client, stockOut) {
       stockOut.projectTitle ?? "",
       stockOut.receivedBy ?? "",
       stockOut.handoverType === "internal" ? "internal" : "external",
+      stockOut.parentStockOutId ?? null,
+      stockOut.supplementNumber ?? null,
       toTimestampValue(stockOut.createdAt),
       stockOut.createdByUserId ?? null,
       stockOut.createdByName ?? null
@@ -1861,6 +1903,25 @@ function getNextHandoverDocumentNo(data, timestamp) {
   return `HF-${year}-${String(nextNumber).padStart(4, "0")}`;
 }
 
+function getNextSupplementaryHandoverDocumentNo(data, parentRecord) {
+  const parentDocumentNo = String(parentRecord?.documentNo ?? "").trim();
+  if (!parentDocumentNo) return "";
+  const escapedParentNo = parentDocumentNo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const supplementPattern = new RegExp(`^${escapedParentNo}-A(\\d+)$`);
+  const usedNumbers = new Set((data.stockOuts ?? [])
+    .filter((record) => record.parentStockOutId === parentRecord.id || supplementPattern.test(String(record.documentNo ?? "")))
+    .map((record) => String(record.documentNo ?? ""))
+    .map((documentNo) => {
+      const match = documentNo.match(supplementPattern);
+      return match ? Number(match[1]) : 0;
+    })
+    .filter(Boolean));
+
+  let nextNumber = 1;
+  while (usedNumbers.has(nextNumber)) nextNumber += 1;
+  return `${parentDocumentNo}-A${nextNumber}`;
+}
+
 async function handleCreateStockAction(user, payload) {
   requireAnyRole(user, ["admin", "administrative"], "Only Admin or Administrative users can create new stock.");
   return runRelationalAction("action:create-stock", async (data, client) => {
@@ -2014,6 +2075,15 @@ async function handleDrawStockAction(user, payload) {
     const handoverType = payload.handoverType === "internal" ? "internal" : "external";
     const lines = Array.isArray(payload.lines) ? payload.lines : [];
     const manualItems = Array.isArray(payload.manualItems) ? payload.manualItems : [];
+    const requestedParentStockOutId = toCleanText(payload.parentStockOutId);
+    let parentStockOut = null;
+    if (requestedParentStockOutId) {
+      const requestedParent = data.stockOuts.find((record) => record.id === requestedParentStockOutId);
+      if (!requestedParent) throw new Error("The original handover for this supplement could not be found.");
+      parentStockOut = requestedParent.parentStockOutId
+        ? data.stockOuts.find((record) => record.id === requestedParent.parentStockOutId) ?? requestedParent
+        : requestedParent;
+    }
     if (!projectTitle || !receivedBy) throw new Error("Complete project and receiver details before saving.");
     if (!lines.length && !manualItems.length) throw new Error("Add at least one stock-out item with a valid quantity.");
 
@@ -2105,14 +2175,22 @@ async function handleDrawStockAction(user, payload) {
       await updateInventoryItem(client, item);
     }
 
+    const supplementaryDocumentNo = parentStockOut ? getNextSupplementaryHandoverDocumentNo(data, parentStockOut) : "";
+    const supplementNumber = supplementaryDocumentNo
+      ? Number(supplementaryDocumentNo.match(/-A(\d+)$/)?.[1] ?? 1)
+      : null;
     const stockOutRecord = {
       id: crypto.randomUUID(),
-      documentNo: getNextHandoverDocumentNo(data, timestamp),
+      documentNo: parentStockOut
+        ? supplementaryDocumentNo
+        : getNextHandoverDocumentNo(data, timestamp),
       items: issuedItems,
       manualItems: manualIssuedItems,
       projectTitle,
       receivedBy,
       handoverType,
+      parentStockOutId: parentStockOut?.id ?? null,
+      supplementNumber,
       createdAt: timestamp,
       createdByUserId: user.id,
       createdByName: user.name

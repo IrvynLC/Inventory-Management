@@ -6726,7 +6726,16 @@ body.modal-open .modal-backdrop {
 .toolbar {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
   margin-bottom: 16px;
+}
+
+.toolbar-note {
+  margin-right: auto;
+  color: #52627a;
+  font-size: 0.82rem;
+  font-weight: 750;
 }
 
 @media (max-width: 1120px) {
@@ -8740,6 +8749,25 @@ body[data-page="draw-stock"] #stock-out-summary {
 body[data-page="draw-stock"] .field-grid {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 18px;
+}
+
+body[data-page="draw-stock"] .supplement-draw-banner {
+  display: grid;
+  gap: 3px;
+  margin: 18px 20px 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(47, 109, 246, 0.22);
+  border-radius: 7px;
+  background: #f4f7ff;
+  color: #52627a;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+body[data-page="draw-stock"] .supplement-draw-banner strong {
+  color: #17345c;
+  font-size: 0.88rem;
+  font-weight: 850;
 }
 
 body[data-page="draw-stock"] .handover-type-field {
