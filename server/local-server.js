@@ -1198,7 +1198,7 @@ async function replaceRelationalState(client, data) {
           row.ownDelta ?? null,
           row.consignmentDelta ?? null,
           row.quantity ?? null,
-          row.stockType ?? null,
+          normalizeCorrectionStockType(row.stockType),
           row.ownQuantity ?? null,
           row.consignmentQuantity ?? null,
           JSON.stringify(toJsonValue(row.previousValues)),
@@ -1482,7 +1482,7 @@ async function insertCorrection(client, correction) {
         row.ownDelta ?? null,
         row.consignmentDelta ?? null,
         row.quantity ?? null,
-        row.stockType ?? null,
+        normalizeCorrectionStockType(row.stockType),
         row.ownQuantity ?? null,
         row.consignmentQuantity ?? null,
         JSON.stringify(toJsonValue(row.previousValues)),
@@ -1798,6 +1798,10 @@ function toCleanText(value, fallback = "") {
 function normalizeUnitValue(value, fallback = "unit") {
   const unit = toCleanText(value, fallback).toUpperCase();
   return unit === "PC" ? "PCS" : unit;
+}
+
+function normalizeCorrectionStockType(value) {
+  return value === "own" || value === "consignment" ? value : null;
 }
 
 function toCleanMultilineText(value, fallback = "") {
@@ -2332,7 +2336,19 @@ function getActivityRecord(data, type, id) {
         quantity: Number(line.quantity ?? 0),
         ownQuantity: Number(line.ownQuantity ?? line.quantity ?? 0),
         consignmentQuantity: Number(line.consignmentQuantity ?? 0)
-      }))
+      })).concat((stockOut.manualItems ?? []).map((line) => ({
+        itemId: null,
+        brand: line.brand ?? "-",
+        model: line.category ?? "-",
+        name: line.description ?? "-",
+        sku: line.stockCode ?? "-",
+        unit: line.unit ?? "-",
+        location: "Additional handover item",
+        quantity: Number(line.quantity ?? 0),
+        stockType: "document",
+        ownQuantity: 0,
+        consignmentQuantity: 0
+      })))
     };
   }
 
@@ -2351,6 +2367,21 @@ function getActivityRecord(data, type, id) {
       itemRows: isCreateCorrection
         ? (correction.itemRows ?? [])
         : (correction.itemRows ?? []).map((row) => {
+            if (!row.itemId) {
+              return {
+                itemId: null,
+                brand: row.correctedValues?.brand ?? row.brand ?? "-",
+                model: row.correctedValues?.model ?? row.model ?? "-",
+                name: row.correctedValues?.name ?? row.name ?? "-",
+                sku: row.correctedValues?.sku ?? row.sku ?? "-",
+                unit: row.correctedValues?.unit ?? row.unit ?? "-",
+                location: row.location ?? "Additional handover item",
+                quantity: Number(row.correctedValues?.quantity ?? row.quantity ?? 0),
+                stockType: "document",
+                ownQuantity: 0,
+                consignmentQuantity: 0
+              };
+            }
             const correctedOwn = Number(row.correctedValues?.ownQuantity ?? row.ownQuantity ?? 0);
             const correctedConsignment = Number(row.correctedValues?.consignmentQuantity ?? row.consignmentQuantity ?? 0);
             return {
@@ -2388,6 +2419,7 @@ async function handleCorrectActivityAction(user, payload) {
     const id = toCleanText(payload.id);
     const reason = toCleanText(payload.reason);
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    const documentRows = Array.isArray(payload.documentRows) ? payload.documentRows : [];
     const record = getActivityRecord(data, type, id);
     const correctionKind = getCorrectableRecordKind(record);
 
@@ -2539,6 +2571,62 @@ async function handleCorrectActivityAction(user, payload) {
             : { ownQuantity: correctedOwnQuantity, consignmentQuantity: correctedConsignmentQuantity },
           balanceBefore,
           balanceAfter
+        });
+      }
+
+      const documentOnlyRows = record.itemRows
+        .map((row, index) => ({ ...row, sourceRowIndex: index }))
+        .filter((row) => !row.itemId);
+      for (const [documentIndex, documentRow] of documentRows.entries()) {
+        if (correctionKind !== "stock-out") continue;
+        const sourceRowIndex = Number(documentRow.sourceRowIndex ?? -1);
+        const original = documentOnlyRows.find((row) => row.sourceRowIndex === sourceRowIndex) ?? documentOnlyRows[documentIndex];
+        if (!original) continue;
+
+        const corrected = documentRow.correctedValues ?? documentRow ?? {};
+        const nextValues = {
+          brand: toCleanText(corrected.brand, "-"),
+          model: toCleanText(corrected.model, "-"),
+          name: toCleanText(corrected.name),
+          sku: toCleanText(corrected.sku, "-"),
+          unit: normalizeUnitValue(corrected.unit || "PCS"),
+          quantity: toNonNegativeInt(corrected.quantity)
+        };
+        if (!nextValues.name) {
+          throw new Error("Please complete the additional handover item description before saving.");
+        }
+
+        const previousValues = {
+          brand: original.brand ?? "-",
+          model: original.model ?? "-",
+          name: original.name ?? "-",
+          sku: original.sku ?? "-",
+          unit: normalizeUnitValue(original.unit || "PCS"),
+          quantity: Number(original.quantity ?? 0)
+        };
+        const changedFields = Object.keys(nextValues).filter((key) => String(previousValues[key] ?? "") !== String(nextValues[key] ?? ""));
+        if (!changedFields.length) continue;
+
+        correctionRows.push({
+          itemId: null,
+          brand: nextValues.brand,
+          model: nextValues.model,
+          name: nextValues.name,
+          sku: nextValues.sku,
+          unit: nextValues.unit,
+          location: "Additional handover item",
+          quantityDelta: 0,
+          ownDelta: 0,
+          consignmentDelta: 0,
+          quantity: nextValues.quantity,
+          stockType: null,
+          ownQuantity: 0,
+          consignmentQuantity: 0,
+          previousValues,
+          correctedValues: nextValues,
+          changedFields,
+          balanceBefore: null,
+          balanceAfter: null
         });
       }
     }

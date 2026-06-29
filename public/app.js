@@ -1839,6 +1839,8 @@ function showCorrectionConfirmationDialog(record, form) {
     const isCreate = correctionKind === "create";
     const recordLabel = isCreate ? "stock creation" : correctionKind === "stock-in" ? "stock-in" : "stock-out";
     const correctionRows = isCreate ? record.itemRows : getBalanceCorrectionRows(record);
+    const documentCorrectionCount = form.querySelectorAll("[data-document-correction-row]").length;
+    const totalCorrectionRows = correctionRows.length + documentCorrectionCount;
     modal.innerHTML = `
       <div class="confirm-modal-backdrop" data-confirm-cancel></div>
       <div class="confirm-dialog create-stock-confirm-dialog">
@@ -1846,7 +1848,7 @@ function showCorrectionConfirmationDialog(record, form) {
           <div>
             <p class="eyebrow">Confirm Correction</p>
             <h3 id="correction-confirm-title">Save ${escapeHtml(recordLabel)} correction?</h3>
-            <p class="section-copy">This will update ${isCreate ? "the master item information" : "inventory balances"} and create a permanent audit record.</p>
+            <p class="section-copy">This will update ${isCreate ? "the master item information" : documentCorrectionCount && !correctionRows.length ? "document-only handover rows" : "inventory balances"} and create a permanent audit record.</p>
           </div>
         </div>
         <section class="create-review-card" aria-label="Correction summary">
@@ -1855,7 +1857,7 @@ function showCorrectionConfirmationDialog(record, form) {
               <span class="create-review-kicker">Original record</span>
               <h4>${escapeHtml(record.title)}</h4>
             </div>
-            <span class="create-review-location">${escapeHtml(correctionRows.length)} line${correctionRows.length === 1 ? "" : "s"}</span>
+            <span class="create-review-location">${escapeHtml(totalCorrectionRows)} line${totalCorrectionRows === 1 ? "" : "s"}</span>
           </div>
           <div class="create-review-grid">
             <div class="create-review-field">
@@ -1864,7 +1866,7 @@ function showCorrectionConfirmationDialog(record, form) {
             </div>
             <div class="create-review-field">
               <span>Correction type</span>
-              <strong>${isCreate ? "Item information" : "Stock balance"}</strong>
+              <strong>${isCreate ? "Item information" : documentCorrectionCount && !correctionRows.length ? "Document-only handover" : "Stock balance"}</strong>
             </div>
           </div>
           ${buildCorrectionPreviewMarkup(record, form)}
@@ -1904,7 +1906,13 @@ function showCorrectionConfirmationDialog(record, form) {
 }
 
 function formatDateTime(value) {
-  return new Date(value).toLocaleString();
+  return new Date(value).toLocaleString(undefined, {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
 }
 
 function formatDateOnly(value) {
@@ -1916,7 +1924,7 @@ function renderActivityDateTime(value) {
   return `
     <div class="activity-date-time">
       <strong>${escapeHtml(date.toLocaleDateString())}</strong>
-      <span>${escapeHtml(date.toLocaleTimeString())}</span>
+      <span>${escapeHtml(date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }))}</span>
     </div>
   `;
 }
@@ -2412,7 +2420,7 @@ function renderCorrectionSection(record) {
       </section>
     `;
   }
-  if (!isCreate && !balanceCorrectionRows.length) {
+  if (!isCreate && !balanceCorrectionRows.length && !documentOnlyRows.length) {
     return `
       <section class="panel project-card correction-panel">
         <div class="panel-header panel-header-tight">
@@ -2515,22 +2523,30 @@ function renderCorrectionSection(record) {
             <table>
               <thead>
                 <tr>
+                  ${isCombinedHandoverCorrection ? "<th>Document</th>" : ""}
                   <th>Additional Handover Item</th>
                   <th>Stock Code</th>
-                  <th>Issued Qty</th>
-                  <th>Status</th>
+                  <th>Brand / Category</th>
+                  <th>Correct Qty</th>
+                  <th>Unit</th>
                 </tr>
               </thead>
               <tbody>
-                ${documentOnlyRows.map((item) => `
-                  <tr>
+                ${documentOnlyRows.map((item, index) => `
+                  <tr data-document-correction-row data-source-stock-out-id="${escapeHtml(item.sourceStockOutId ?? record.sourceId ?? "")}" data-correction-target-type="${escapeHtml(item.correctionTargetType ?? "stock-out")}" data-correction-target-id="${escapeHtml(item.correctionTargetId ?? item.sourceStockOutId ?? record.sourceId ?? "")}" data-source-row-index="${escapeHtml(String(item.sourceRowIndex ?? index))}">
+                    ${isCombinedHandoverCorrection ? `<td><strong>${escapeHtml(item.sourceDocumentNo ?? "-")}</strong></td>` : ""}
                     <td>
-                      <strong>${escapeHtml(item.name)}</strong>
-                      <br><span class="muted">${escapeHtml(item.brand ?? "-")} / ${escapeHtml(item.model ?? "-")}</span>
+                      <input name="correctManualName-${index}" type="text" value="${escapeHtml(item.name ?? "")}" placeholder="Manual item description" required>
                     </td>
-                    <td>${escapeHtml(item.sku ?? "-")}</td>
-                    <td>${escapeHtml(String(item.quantity ?? 0))} ${escapeHtml(formatUnitDisplay(item.unit))}</td>
-                    <td><span class="inline-stock-chip inline-stock-chip-total">Document only</span></td>
+                    <td><input name="correctManualSku-${index}" type="text" value="${escapeHtml(item.sku ?? "")}" placeholder="-"></td>
+                    <td>
+                      <div class="manual-correction-brand-category">
+                        <input name="correctManualBrand-${index}" type="text" value="${escapeHtml(item.brand ?? "")}" placeholder="Brand">
+                        <input name="correctManualModel-${index}" type="text" value="${escapeHtml(item.model ?? "")}" placeholder="Category">
+                      </div>
+                    </td>
+                    <td><input class="stock-out-qty-input" name="correctManualQuantity-${index}" type="number" min="0" step="1" value="${escapeHtml(String(item.quantity ?? 0))}"></td>
+                    <td><input class="stock-out-qty-input" name="correctManualUnit-${index}" type="text" value="${escapeHtml(formatUnitDisplay(item.unit))}" placeholder="PCS"></td>
                   </tr>
                 `).join("")}
               </tbody>
@@ -2544,7 +2560,7 @@ function renderCorrectionSection(record) {
         </label>
         <div class="form-actions">
           <button type="submit" class="button-secondary">Save Correction</button>
-          <span class="form-hint">Corrections create a new audit record and update ${isCreate ? "the master item information" : "inventory balances for inventory-issued rows"}.</span>
+          <span class="form-hint">Corrections create a new audit record and update ${isCreate ? "the master item information" : "inventory balances for inventory-issued rows. Additional handover rows are document-only"}.</span>
         </div>
       </form>
     </section>
@@ -4969,7 +4985,7 @@ function getCombinedHandoverContext(record, data) {
     rootRecord,
     supplementRecords,
     items: records.flatMap((entry) => getEffectiveStockOutItems(entry, data)),
-    manualItems: records.flatMap((entry) => normalizeStockOutManualItems(entry)),
+    manualItems: records.flatMap((entry) => getEffectiveStockOutManualItems(entry, data)),
     isCombined: supplementRecords.length > 0
   };
 }
@@ -4991,6 +5007,27 @@ function getEffectiveStockOutItems(record, data) {
       ownQuantity,
       consignmentQuantity,
       quantity: ownQuantity + consignmentQuantity
+    };
+  });
+}
+
+function getEffectiveStockOutManualItems(record, data) {
+  const manualItems = normalizeStockOutManualItems(record);
+  const latestCorrection = getLatestCorrection(data, "stock-out", record?.id);
+  if (!latestCorrection) return manualItems;
+
+  const correctedRows = (latestCorrection.itemRows ?? []).filter((row) => !row.itemId);
+  return manualItems.map((line, index) => {
+    const corrected = correctedRows[index]?.correctedValues ?? correctedRows[index] ?? null;
+    if (!corrected) return line;
+    return {
+      ...line,
+      description: corrected.name ?? line.description,
+      stockCode: corrected.sku ?? line.stockCode,
+      brand: corrected.brand ?? line.brand,
+      category: corrected.model ?? line.category,
+      quantity: Number(corrected.quantity ?? line.quantity ?? 0),
+      unit: corrected.unit ?? line.unit
     };
   });
 }
@@ -5558,7 +5595,7 @@ function getActivityDetailRecord(type, id, data) {
         { label: "Received By", value: stockOut.receivedBy ?? "-" },
         ...(consignmentIssued ? [{ label: "Consignment Issued", value: consignmentIssued }] : [])
       ],
-      itemRows: items.map((line) => ({
+      itemRows: items.map((line, index) => ({
         brand: line.itemSnapshot?.brand ?? "-",
         model: line.itemSnapshot?.model ?? "-",
         name: line.itemSnapshot?.name ?? "-",
@@ -5570,8 +5607,9 @@ function getActivityDetailRecord(type, id, data) {
         balanceAfter: typeof line.balanceAfter === "object" ? line.balanceAfter.quantity ?? 0 : line.balanceAfter ?? 0,
         ownQuantity: line.ownQuantity ?? line.quantity ?? 0,
         consignmentQuantity: line.consignmentQuantity ?? 0,
-        consignmentToRestock: line.consignmentToRestock ?? 0
-      })).concat(manualItems.map((line) => ({
+        consignmentToRestock: line.consignmentToRestock ?? 0,
+        sourceRowIndex: index
+      })).concat(manualItems.map((line, index) => ({
         brand: line.brand ?? "-",
         model: line.category ?? "-",
         name: line.description ?? "-",
@@ -5583,7 +5621,8 @@ function getActivityDetailRecord(type, id, data) {
         balanceAfter: null,
         ownQuantity: 0,
         consignmentQuantity: 0,
-        consignmentToRestock: 0
+        consignmentToRestock: 0,
+        sourceRowIndex: items.length + index
       }))),
       balanceRows,
       hasCorrection: Boolean(latestCorrection),
@@ -5687,6 +5726,33 @@ function getActivityDetailRecord(type, id, data) {
         { label: "Reason", value: correction.reason ?? "No reason provided" }
       ].filter(Boolean),
       itemRows: (correction.itemRows ?? []).map((row) => {
+        if (!row.itemId) {
+          return {
+            brand: row.correctedValues?.brand ?? row.brand ?? "-",
+            model: row.correctedValues?.model ?? row.model ?? "-",
+            name: row.correctedValues?.name ?? row.name ?? "-",
+            itemId: null,
+            sku: row.correctedValues?.sku ?? row.sku ?? "-",
+            quantity: row.correctedValues?.quantity ?? row.quantity ?? 0,
+            stockType: "document",
+            ownQuantity: 0,
+            consignmentQuantity: 0,
+            quantityDelta: 0,
+            ownDelta: 0,
+            consignmentDelta: 0,
+            previousOwnMovementQuantity: 0,
+            previousConsignmentMovementQuantity: 0,
+            correctedOwnMovementQuantity: 0,
+            correctedConsignmentMovementQuantity: 0,
+            consignmentToRestock: 0,
+            unit: row.correctedValues?.unit ?? row.unit ?? "-",
+            location: row.location ?? "Additional handover item",
+            balanceAfter: null,
+            previousValues: row.previousValues ?? null,
+            correctedValues: row.correctedValues ?? null,
+            changedFields: row.changedFields ?? []
+          };
+        }
         const previousBreakdown = getPreviousMovementBreakdown(row);
         const correctedBreakdown = getCorrectedMovementBreakdown(row);
         return {
@@ -6166,6 +6232,22 @@ function showReviseHandoverDialog({ documentNo, addHref, correctionHref }) {
   document.addEventListener("keydown", handleKeydown);
 }
 
+function collectDocumentCorrectionRows(form) {
+  return Array.from(form.querySelectorAll("[data-document-correction-row]")).map((row, index) => ({
+    targetType: row.dataset.correctionTargetType || "stock-out",
+    targetId: row.dataset.correctionTargetId || row.dataset.sourceStockOutId || "",
+    sourceRowIndex: Number(row.dataset.sourceRowIndex ?? index),
+    correctedValues: {
+      name: String(row.querySelector(`input[name="correctManualName-${index}"]`)?.value ?? "").trim().replace(/\s+/g, " "),
+      sku: String(row.querySelector(`input[name="correctManualSku-${index}"]`)?.value ?? "").trim().replace(/\s+/g, " ") || "-",
+      brand: String(row.querySelector(`input[name="correctManualBrand-${index}"]`)?.value ?? "").trim().replace(/\s+/g, " ") || "-",
+      model: String(row.querySelector(`input[name="correctManualModel-${index}"]`)?.value ?? "").trim().replace(/\s+/g, " ") || "-",
+      quantity: Math.max(Number(row.querySelector(`input[name="correctManualQuantity-${index}"]`)?.value ?? 0), 0),
+      unit: normalizeUnitInput(row.querySelector(`input[name="correctManualUnit-${index}"]`)?.value)
+    }
+  }));
+}
+
 async function applyActivityCorrection(type, id, form) {
   const data = loadData();
   const record = getActivityDetailRecord(type, id, data);
@@ -6221,6 +6303,7 @@ async function applyActivityCorrection(type, id, form) {
       id,
       reason,
       rows,
+      documentRows: collectDocumentCorrectionRows(form),
       privateAudit: isMasterUser(currentUser)
     });
     return { ok: true, correctionId: result.correction?.id };
@@ -6239,12 +6322,18 @@ async function applyCombinedHandoverCorrection(record, form) {
   }
 
   const formRows = Array.from(form.querySelectorAll("[data-correction-row]"));
+  const documentRows = collectDocumentCorrectionRows(form);
   const targetRefs = Array.from(new Map(
-    formRows
-      .map((row) => ({
+    [
+      ...formRows.map((row) => ({
         type: row.dataset.correctionTargetType || "stock-out",
         id: row.dataset.correctionTargetId || row.dataset.sourceStockOutId || ""
+      })),
+      ...documentRows.map((row) => ({
+        type: row.targetType || "stock-out",
+        id: row.targetId || ""
       }))
+    ]
       .filter((entry) => entry.id)
       .map((entry) => [`${entry.type}:${entry.id}`, entry])
   ).values());
@@ -6255,7 +6344,9 @@ async function applyCombinedHandoverCorrection(record, form) {
     if (!sourceRecord) return { ok: false, message: "One linked correction target could not be found." };
 
     const sourceRows = getBalanceCorrectionRows(sourceRecord);
+    const sourceDocumentRows = getDocumentOnlyCorrectionRows(sourceRecord);
     const rows = [];
+    const targetDocumentRows = [];
     let hasChanges = false;
 
     sourceRows.forEach((sourceRow, sourceIndex) => {
@@ -6277,8 +6368,29 @@ async function applyCombinedHandoverCorrection(record, form) {
       });
     });
 
+    sourceDocumentRows.forEach((sourceRow, sourceIndex) => {
+      const documentRow = documentRows.find((row) =>
+        row.targetType === target.type
+        && row.targetId === target.id
+        && row.sourceRowIndex === sourceRows.length + sourceIndex
+      );
+      if (!documentRow) return;
+      const corrected = documentRow.correctedValues;
+      if (
+        corrected.name !== String(sourceRow.name ?? "").trim()
+        || corrected.sku !== String(sourceRow.sku ?? "-").trim()
+        || corrected.brand !== String(sourceRow.brand ?? "-").trim()
+        || corrected.model !== String(sourceRow.model ?? "-").trim()
+        || Number(corrected.quantity ?? 0) !== Number(sourceRow.quantity ?? 0)
+        || corrected.unit !== normalizeUnitInput(sourceRow.unit)
+      ) {
+        hasChanges = true;
+      }
+      targetDocumentRows.push(documentRow);
+    });
+
     if (hasChanges) {
-      correctionJobs.push({ target, rows });
+      correctionJobs.push({ target, rows, documentRows: targetDocumentRows });
     }
   }
 
@@ -6293,6 +6405,7 @@ async function applyCombinedHandoverCorrection(record, form) {
         id: job.target.id,
         reason,
         rows: job.rows,
+        documentRows: job.documentRows,
         revisionBatchId,
         privateAudit: isMasterUser(currentUser)
       });

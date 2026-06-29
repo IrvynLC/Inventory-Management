@@ -3479,6 +3479,13 @@ body[data-page="activity-detail"] .topbar h2 {
   min-height: 92px;
 }
 
+.manual-correction-brand-category {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  min-width: 220px;
+}
+
 .topbar,
 .panel {
   border-radius: 24px;
