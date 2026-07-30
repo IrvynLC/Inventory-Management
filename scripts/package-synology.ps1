@@ -49,6 +49,10 @@ if (-not (Test-Path -LiteralPath $productionUsersPath)) {
   Copy-Item -LiteralPath (Join-Path $stagingRoot "config\users.example.json") -Destination $productionUsersPath
 }
 
+$backupPath = Join-Path $stagingRoot "backups\postgres"
+New-Item -ItemType Directory -Force -Path $backupPath | Out-Null
+Set-Content -LiteralPath (Join-Path $backupPath ".gitkeep") -Value "" -Encoding ASCII
+
 Get-ChildItem -Path $stagingRoot -Recurse -Include "users.production.json" |
   Where-Object { $_.FullName -notlike "*$([IO.Path]::DirectorySeparatorChar)config$([IO.Path]::DirectorySeparatorChar)users.production.json" } |
   Remove-Item -Force
